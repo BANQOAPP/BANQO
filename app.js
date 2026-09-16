@@ -9,6 +9,7 @@
   let toastTimer = null;
   let timerInt = null;
   let sessionInt = null;
+  const PRACTICE_KEY = 'banqo_active_practice_v7';
 
   const demoQuestions = [
     {id:'demo-1',examen:'ENAM',especialidad:'Cirugía',tema:'Abdomen agudo',subtema:'Vólvulo',pregunta:'Paciente con dolor y distensión abdominal. En la radiografía se observa el signo del grano de café. ¿Cuál es el diagnóstico más probable?',opciones:{A:'Obstrucción por adherencias',B:'Vólvulo de sigmoides',C:'Íleo paralítico',D:'Invaginación intestinal'},correcta:'B',explicacion:'El signo del grano de café en una radiografía simple de abdomen es clásico del vólvulo de sigmoides.',datito_galactico:'OJO PIOJO: “signo del grano de café” = piensa primero en vólvulo de sigmoides.'},
@@ -37,6 +38,54 @@
 
   function readJSON(k){ try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;} }
   function writeJSON(k,v){ localStorage.setItem(k, JSON.stringify(v)); }
+  function clearPracticeSnapshot(){ localStorage.removeItem(PRACTICE_KEY); }
+  function savePracticeSnapshot(){
+    const p=state.practice;
+    if(!p||!state.user)return;
+    try{
+      if(p.questions?.length && p.index>=0 && p.index<p.questions.length && p.eliminated instanceof Set){
+        const old=p.answers?.[p.index]||{};
+        p.answers[p.index]={...old,selected:p.selected??old.selected??null,eliminated:[...p.eliminated],marked:Boolean(old.marked),tiempo_seg:Number(old.tiempo_seg||Math.max(0,Math.round((Date.now()-(p.questionStart||Date.now()))/1000)))};
+      }
+      const plain={...p,eliminated:[...(p.eliminated||[])],questionStart:Date.now()};
+      writeJSON(PRACTICE_KEY,{uid:state.user.uid,savedAt:Date.now(),practice:plain});
+    }catch(e){}
+  }
+  function restorePracticeSnapshot(){
+    const snap=readJSON(PRACTICE_KEY);
+    if(!snap||!snap.practice||!state.user||String(snap.uid)!==String(state.user.uid))return false;
+    const p=snap.practice;
+    if(!Array.isArray(p.questions)||!p.questions.length){clearPracticeSnapshot();return false;}
+    p.index=Math.max(0,Math.min(Number(p.index||0),p.questions.length-1));
+    p.answers=p.answers||{};
+    p.eliminated=new Set((p.answers[p.index]?.eliminated)||p.eliminated||[]);
+    p.selected=p.answers[p.index]?.selected??p.selected??null;
+    p.questionStart=Date.now();
+    p.start=Number(p.start||Date.now());
+    state.practice=p;
+    go('practice');
+    renderQuestion();
+    startTimer();
+    toast('Sesión recuperada. Puedes continuar donde la dejaste.',4200);
+    return true;
+  }
+  async function discardActivePractice(){
+    const p=state.practice;
+    if(!p)return;
+    clearInterval(timerInt);
+    clearPracticeSnapshot();
+    state.practice=null;
+    if(!state.demo && p.kind==='sim' && p.simulationId){
+      try{await api('abandonSimulation',authPayload({simulation_id:p.simulationId}));}catch(e){}
+    }
+  }
+  async function confirmLeavePractice(){
+    if(!state.practice)return true;
+    const ok=window.confirm('Tienes una sesión en curso. ¿Quieres salir? Se perderá todo el progreso de este examen, simulacro o banqueo.');
+    if(!ok)return false;
+    await discardActivePractice();
+    return true;
+  }
   function deviceLabel(){
     const ua=navigator.userAgent;
     const browser=/Edg/.test(ua)?'Edge':/Chrome/.test(ua)?'Chrome':/Safari/.test(ua)&&!/Chrome/.test(ua)?'Safari':/Firefox/.test(ua)?'Firefox':'Navegador';
@@ -120,10 +169,24 @@
   async function boot(){
     bindActions(); bindSourceCards(); bindProfileInputs();
     $('adminNav')?.classList.add('hidden');
-    await health();
+    health().catch(()=>{});
+    const snap=readJSON(PRACTICE_KEY);
+    if(state.user && state.token && snap?.practice && String(snap.uid)===String(state.user.uid)){
+      await enterApp({preferRestore:true});
+      api('checkSession',authPayload()).then(d=>{state.user=d.user;writeJSON('banqo_user',state.user);}).catch(e=>{
+        const c=String(e?.code||e?.message||e);
+        if(c.includes('SESSION_NOT_ACTIVE')||c.includes('USER_DISABLED')||c.includes('AUTH_REQUIRED'))handleKicked();
+        else setApiBanner('Conexión temporalmente lenta. Tu sesión de estudio sigue guardada en este dispositivo.',false);
+      });
+      return;
+    }
     if(state.user && state.token){
       try{ const d=await api('checkSession',authPayload()); state.user=d.user; writeJSON('banqo_user',state.user); await enterApp(); return; }
-      catch(e){ clearAuth(); }
+      catch(e){
+        const c=String(e?.code||e?.message||e);
+        if(c.includes('SESSION_NOT_ACTIVE')||c.includes('USER_DISABLED')||c.includes('AUTH_REQUIRED'))clearAuth();
+        else { await enterApp(); setApiBanner('No pudimos validar la sesión en este momento, pero no cerramos tu cuenta.',false); return; }
+      }
     }
     showOnly('landing');
   }
@@ -147,7 +210,7 @@
         else if(a==='back-login')showAuth('login');
         else if(a==='resend-confirmation')toast('Esta versión con Google Sheets no usa confirmación por correo todavía.');
         else if(a==='logout')await logout();
-        else if(a==='dashboard')go('dashboard');
+        else if(a==='dashboard'){if(await confirmLeavePractice())go('dashboard');}
         else if(a==='go-banqueo')go('banqueo');
         else if(a==='start-bank')openFeedbackMode('bank');
         else if(a==='start-sim')openFeedbackMode('sim');
@@ -163,7 +226,7 @@
         else if(a==='finish-sim')await finishSimulation();
         else if(a==='save-note')await saveNote();
         else if(a==='bookmark')await toggleBookmark();
-        else if(a==='cancel-practice'){ if(confirm('¿Salir de esta sesión?')){clearInterval(timerInt);go(state.practice?.kind==='sim'?'simulacros':'banqueo');state.practice=null;} }
+        else if(a==='cancel-practice'){const target=state.practice?.kind==='sim'?'simulacros':'banqueo';if(await confirmLeavePractice())go(target);}
         else if(a==='save-profile')await saveProfile();
         else if(a==='review-last-simulation')openSimulationReview(state.lastSimulationReview,'result');
         else if(a==='review-simulation')await loadSavedSimulationReview(btn.dataset.simulationId);
@@ -177,7 +240,7 @@
         toast(friendlyError(err),4500);
       }
     });
-    qsa('.navbtn').forEach(b=>b.addEventListener('click',()=>go(b.dataset.page)));
+    qsa('.navbtn').forEach(b=>b.addEventListener('click',async()=>{if(await confirmLeavePractice())go(b.dataset.page);}));
   }
   function bindSourceCards(){
     qsa('.source-grid').forEach(grid=>grid.addEventListener('click',e=>{
@@ -206,25 +269,33 @@
   function setAuth(user,token){ state.demo=false; state.user=user; state.token=token; writeJSON('banqo_user',user); localStorage.setItem('banqo_session_token',token); }
   function clearAuth(){ state.user=null;state.token='';state.demo=false;localStorage.removeItem('banqo_user');localStorage.removeItem('banqo_session_token');clearInterval(sessionInt); }
   async function logout(){
+    if(state.practice){const ok=await confirmLeavePractice();if(!ok)return;}
     if(!state.demo && state.user && state.token){try{await api('logout',authPayload());}catch(e){}}
-    clearAuth(); showOnly('landing');
+    clearPracticeSnapshot(); clearAuth(); showOnly('landing');
   }
   function demoEnter(){
     state.demo=true; state.user={uid:'demo',nombre:'Demo',apellido:'BANQO',email:'demo@banqo.local',plan:'FREE',objetivo:'ENARM'}; state.token='demo'; enterApp(); setApiBanner('MODO DEMO · los datos no se guardan en Google Sheets',false);
   }
 
-  async function enterApp(){
+  async function enterApp(options={}){
     showOnly('app');
     $('userName').textContent=state.user?.nombre||'Usuario'; $('avatar').textContent=(state.user?.nombre||'U').slice(0,1).toUpperCase();
     $('hello').textContent=`¡Hola, ${state.user?.nombre||'Usuario'}! 👋`;
     renderGoalGreeting(state.user?.objetivo);
     $('sessionInfo').textContent=state.demo?'Demo local':`${deviceLabel()} · una sola sesión activa`;
-    $('adminNav')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()!=='ADMIN');
-    $('adminLocked')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()==='ADMIN');
-    $('adminPanel')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()!=='ADMIN');
-    if(state.demo){ populateDemoFilters(); renderDashboard({total:0,correct:0,accuracy:null,last_24h:0,remaining:15,premium:false,plan:'Free',xp:0}); loadProfileDemo(); }
-    else { await Promise.all([loadFilters(),loadDashboard(),loadProfile()]); startSessionMonitor(); }
-    go('dashboard');
+    const admin=String(state.user?.role||'USER').toUpperCase()==='ADMIN';
+    $('adminNav')?.classList.toggle('hidden',!admin);
+    $('adminLocked')?.classList.toggle('hidden',admin);
+    $('adminPanel')?.classList.toggle('hidden',!admin);
+    const restored=restorePracticeSnapshot();
+    if(state.demo){ populateDemoFilters(); renderDashboard({total:0,correct:0,accuracy:null,last_24h:0,remaining:15,premium:false,admin:false,unlimited:false,plan:'Free',xp:0}); loadProfileDemo(); }
+    else {
+      startSessionMonitor();
+      const jobs=[loadFilters(),loadDashboard(),loadProfile()];
+      if(restored||options.preferRestore)Promise.allSettled(jobs);
+      else await Promise.allSettled(jobs);
+    }
+    if(!restored)go('dashboard');
   }
   function renderGoalGreeting(goal){
     const map={ENARM:'Un paso más cerca de tu especialidad.',ENCAPS_SERUMS:'Un paso más cerca de tu plaza soñada.',INTERNADO:'Un paso más cerca de tu plaza soñada.',ENAM:'Un paso más cerca de tu mejor resultado en el ENAM.'};
@@ -234,7 +305,7 @@
     clearInterval(sessionInt); const sec=Number(CFG.SESSION_CHECK_SECONDS||30);
     sessionInt=setInterval(async()=>{ if(state.demo||!state.user||!state.token)return; try{await api('checkSession',authPayload());}catch(e){if(String(e?.code||e?.message).includes('SESSION_NOT_ACTIVE'))handleKicked();}},Math.max(15,sec)*1000);
   }
-  function handleKicked(){ clearInterval(sessionInt); $('sessionModal')?.classList.remove('hidden'); }
+  function handleKicked(){ clearInterval(sessionInt); clearInterval(timerInt); clearPracticeSnapshot(); state.practice=null; $('sessionModal')?.classList.remove('hidden'); }
 
   function populateDemoFilters(){
     const specs=[...new Set(demoQuestions.map(q=>q.especialidad))], topics=[...new Set(demoQuestions.map(q=>q.tema))], subs=[...new Set(demoQuestions.map(q=>q.subtema))];
@@ -257,11 +328,12 @@
     const d=await api('getDashboard',authPayload()); state.dashboard=d; renderDashboard(d);
   }
   function renderDashboard(d){
-    const max=d.premium?'∞':15;
-    $('dashToday').textContent=d.premium?`${d.last_24h} / ∞`:`${d.last_24h}/${max}`;
-    $('dashAccuracy').textContent=d.accuracy==null?'—':`${d.accuracy}%`; $('dashTotal').textContent=d.total||0; $('dashPlan').textContent=d.plan||'Free';
-    $('planBadge').textContent=d.plan||'Free'; $('planBadge').className='pill '+(d.premium?'p-green':'p-blue');
-    $('profilePlan').textContent=d.premium?'Premium · ilimitado':'Free · 15 preguntas cada 24 h'; $('usagePill').textContent=d.premium?'Premium · ilimitado':`Free · ${d.remaining} restantes`;
+    const unlimited=Boolean(d.unlimited||d.admin||d.premium||String(state.user?.role||'').toUpperCase()==='ADMIN');
+    const plan=d.admin?'Admin':(d.plan||'Free');
+    $('dashToday').textContent=unlimited?`${d.last_24h||0} / ∞`:`${d.last_24h||0}/15`;
+    $('dashAccuracy').textContent=d.accuracy==null?'—':`${d.accuracy}%`; $('dashTotal').textContent=d.total||0; $('dashPlan').textContent=plan;
+    $('planBadge').textContent=unlimited?`${plan} · ∞`:plan; $('planBadge').className='pill '+(unlimited?'p-green':'p-blue');
+    $('profilePlan').textContent=unlimited?`${plan} · acceso ilimitado`:'Free · 15 preguntas cada 24 h'; $('usagePill').textContent=unlimited?`${plan} · ilimitado`:`Free · ${d.remaining} restantes`;
     const xp=Number(d.xp||0),level=Math.floor(xp/100)+1,within=xp%100; $('petLevel').textContent=level;$('petXpText').textContent=`${within}/100 XP`;$('petXpBar').style.width=`${within}%`;$('petXpBar2').style.width=`${within}%`;
   }
 
@@ -309,7 +381,17 @@
       else d=await api('getQuestions',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));
     } else {
       if(state.demo){let pool=demoQuestions.slice(),src=sourceSelected('simSources');if(src!=='Todos')pool=pool.filter(q=>q.examen===src);const raw=Math.max(0,Math.min(200,Number($('simCount').value||0))),count=Math.min(raw===0?200:raw,pool.length);d={simulation_id:'demo-'+Date.now(),questions:shuffleLocal(pool).slice(0,count)};}
-      else d=await api('startSimulation',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));
+      else {
+        try{d=await api('startSimulation',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));}
+        catch(e){
+          const c=String(e?.code||e?.message||e);
+          if(!c.includes('ACTIVE_SIMULATION_EXISTS'))throw e;
+          const reset=window.confirm('Encontramos un simulacro anterior que quedó abierto. ¿Quieres descartarlo y comenzar este nuevo simulacro?');
+          if(!reset)return;
+          await api('abandonSimulation',authPayload({simulation_id:''}));
+          d=await api('startSimulation',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));
+        }
+      }
     }
     if(!(d.questions||[]).length){toast('No hay preguntas suficientes para iniciar el simulacro.');return;}
     beginPractice('sim',d.questions,d.simulation_id||null,feedbackMode);
@@ -317,7 +399,7 @@
 
   function beginPractice(kind,questions,simulationId,feedbackMode='immediate'){
     state.practice={kind,feedbackMode,questions,index:0,correct:0,incorrect:0,blank:0,answered:false,selected:null,eliminated:new Set(),answers:{},simulationId,start:Date.now(),startedAt:new Date().toISOString(),sessionId:`${kind==='sim'?'SIMGUIA':'BANK'}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,source:sourceSelected(kind==='sim'?'simSources':'bankSources'),questionStart:Date.now(),review:null};
-    go('practice'); renderQuestion(); startTimer();
+    go('practice'); renderQuestion(); startTimer(); savePracticeSnapshot();
   }
   function startTimer(){clearInterval(timerInt);timerInt=setInterval(()=>{if(!state.practice)return;const sec=Math.floor((Date.now()-state.practice.start)/1000);$('timer').textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;},1000);}
   function currentQuestion(){return state.practice?.questions?.[state.practice.index];}
@@ -352,16 +434,16 @@
     $('nextBtn').disabled=false;$('notePanel').classList.remove('hidden');$('bookmarkBtn').classList.remove('hidden');
   }
   function applyEliminationVisual(index,on){const row=document.querySelector(`[data-row="${index}"]`),ans=document.querySelector(`.option-answer[data-opt="${index}"]`),btn=document.querySelector(`.discard-option[data-discard="${index}"]`);row?.classList.toggle('eliminated',on);if(ans&&!isSimKind())ans.disabled=on;if(btn)btn.textContent=on?'↩':'✕';}
-  function toggleEliminate(index){const p=state.practice;if(!p||p.answered)return;if(p.eliminated.has(index)){p.eliminated.delete(index);applyEliminationVisual(index,false);}else{if(isSimKind(p)&&p.selected===index)p.selected=null;p.eliminated.add(index);applyEliminationVisual(index,true);}if(isSimKind(p))saveSimState();updateEliminationHint();renderQuestionSelectionOnly();}
-  function clearEliminations(){const p=state.practice;if(!p||p.answered)return;[...p.eliminated].forEach(i=>applyEliminationVisual(i,false));p.eliminated=new Set();if(isSimKind(p))saveSimState();updateEliminationHint();}
+  function toggleEliminate(index){const p=state.practice;if(!p||p.answered)return;if(p.eliminated.has(index)){p.eliminated.delete(index);applyEliminationVisual(index,false);}else{if(isSimKind(p)&&p.selected===index)p.selected=null;p.eliminated.add(index);applyEliminationVisual(index,true);}if(isSimKind(p))saveSimState();updateEliminationHint();renderQuestionSelectionOnly();savePracticeSnapshot();}
+  function clearEliminations(){const p=state.practice;if(!p||p.answered)return;[...p.eliminated].forEach(i=>applyEliminationVisual(i,false));p.eliminated=new Set();if(isSimKind(p))saveSimState();updateEliminationHint();savePracticeSnapshot();}
   function updateEliminationHint(){const p=state.practice,q=currentQuestion();if(!p||!q)return;const left=normalizeOptions(q).length-p.eliminated.size;$('remainingOptions').textContent=p.eliminated.size?`${left} alternativas vivas`:'Sin descartes';}
   function renderQuestionSelectionOnly(){if(!isSimKind())return;qsa('.option-answer').forEach(x=>x.classList.remove('selected-sim'));if(state.practice.selected!=null)document.querySelector(`.option-answer[data-opt="${state.practice.selected}"]`)?.classList.add('selected-sim');}
   function selectSim(index){const p=state.practice;if(p.eliminated.has(index)){p.eliminated.delete(index);applyEliminationVisual(index,false);}p.selected=index;saveSimState({isBlank:false});renderQuestionSelectionOnly();renderSimMap();}
   async function blankAnswer(){if(isEndMode()){state.practice.selected=null;state.practice.answered=true;saveSimState({isBlank:true});renderQuestionSelectionOnly();renderSimMap();$('nextBtn').disabled=false;toast('Pregunta marcada en blanco');}else if(isSimKind()){await submitImmediateSim(null,true);}else await submitBank(null,true);}
-  function saveSimState(extra={}){const p=state.practice,old=p.answers[p.index]||{};p.answers[p.index]={...old,selected:p.selected??null,isBlank:extra.isBlank!==undefined?extra.isBlank:(old.isBlank||false),eliminated:[...p.eliminated],marked:Boolean(old.marked),tiempo_seg:Math.max(0,Math.round((Date.now()-p.questionStart)/1000))};if(p.selected!=null)p.answers[p.index].isBlank=false;}
-  function toggleMarkReview(){const p=state.practice;if(!p||p.kind!=='sim')return;saveSimState();const s=p.answers[p.index];s.marked=!s.marked;$('markReviewBtn').classList.toggle('active',s.marked);$('markReviewBtn').textContent=s.marked?'★ Marcada para revisar':'☆ Marcar para revisar';renderSimMap();}
+  function saveSimState(extra={}){const p=state.practice,old=p.answers[p.index]||{};p.answers[p.index]={...old,selected:p.selected??null,isBlank:extra.isBlank!==undefined?extra.isBlank:(old.isBlank||false),eliminated:[...p.eliminated],marked:Boolean(old.marked),tiempo_seg:Math.max(Number(old.tiempo_seg||0),Math.max(0,Math.round((Date.now()-p.questionStart)/1000)))};if(p.selected!=null)p.answers[p.index].isBlank=false;savePracticeSnapshot();}
+  function toggleMarkReview(){const p=state.practice;if(!p||p.kind!=='sim')return;saveSimState();const s=p.answers[p.index];s.marked=!s.marked;$('markReviewBtn').classList.toggle('active',s.marked);$('markReviewBtn').textContent=s.marked?'★ Marcada para revisar':'☆ Marcar para revisar';renderSimMap();savePracticeSnapshot();}
   function renderSimMap(){const p=state.practice;if(!p||!isSimKind(p))return;let answered=0;$('simMap').innerHTML=p.questions.map((q,i)=>{const s=p.answers[i]||{},isAns=s.selected!=null,isBlank=s.isBlank===true;if(isAns)answered++;let cls=isAns?'answered':isBlank?'blank':'';if(s.marked)cls+=' marked';if(i===p.index)cls+=' current';return `<button data-sim-index="${i}" class="sim-q ${cls.trim()}">${i+1}${s.marked?'★':''}</button>`;}).join('');$('simAnsweredCount').textContent=`${answered}/${p.questions.length}`;}
-  function jumpSim(i){const p=state.practice;if(!p||!isSimKind(p))return;saveSimState();p.index=Math.max(0,Math.min(i,p.questions.length-1));renderQuestion();}
+  function jumpSim(i){const p=state.practice;if(!p||!isSimKind(p))return;saveSimState();p.index=Math.max(0,Math.min(i,p.questions.length-1));renderQuestion();savePracticeSnapshot();}
 
   function selectDeferred(index){
     const p=state.practice;if(!p)return;
@@ -370,7 +452,7 @@
     saveSimState({isBlank:false});
     qsa('.option-answer').forEach(x=>x.classList.remove('selected-sim','deferred-selected'));
     const el=document.querySelector(`.option-answer[data-opt="${index}"]`);el?.classList.add('selected-sim','deferred-selected');
-    $('nextBtn').disabled=false;renderSimMap();
+    $('nextBtn').disabled=false;renderSimMap();savePracticeSnapshot();
   }
 
   async function submitImmediateSim(index,isBlank=false){
@@ -397,6 +479,7 @@
     $('galaxyTip').textContent=d.datito_galactico||'Sigue practicando: el patrón se vuelve más fácil con repetición.';
     renderCommunity(d.estadisticas||{});$('nextBtn').disabled=false;$('notePanel').classList.remove('hidden');$('bookmarkBtn').classList.remove('hidden');
     if(!state.demo){api('getNote',authPayload({question_id:q.id})).then(n=>{$('personalNote').value=n.nota||'';}).catch(()=>{});}
+    savePracticeSnapshot();
   }
   function renderCommunity(s){
     const el=$('communityStats');el.classList.remove('hidden'); const cls=s.dificultad||'Sin clasificación'; $('qDifficulty').textContent=cls;$('qDifficulty').classList.remove('hidden');
@@ -405,23 +488,23 @@
   function prevQuestion(){
     const p=state.practice;if(!p||p.index<=0)return;
     if(isEndMode(p))saveSimState();
-    p.index--;renderQuestion();
+    p.index--;renderQuestion();savePracticeSnapshot();
   }
   async function nextQuestion(){
     const p=state.practice;if(!p)return;
     if(isEndMode(p)){
       saveSimState();
       if(p.index>=p.questions.length-1){ if(isSimKind(p)) await finishSimulation(); else await finishDeferredBank(); return; }
-      p.index++;renderQuestion();return;
+      p.index++;renderQuestion();savePracticeSnapshot();return;
     }
     if(isSimKind(p)){
       if(!p.answered)return;
       if(p.index>=p.questions.length-1){showImmediateSimResult();return;}
-      p.index++;renderQuestion();return;
+      p.index++;renderQuestion();savePracticeSnapshot();return;
     }
     if(!p.answered)return;
     if(p.index>=p.questions.length-1){showBankResult();return;}
-    p.index++;renderQuestion();
+    p.index++;renderQuestion();savePracticeSnapshot();
   }
   async function finishDeferredBank(){
     const p=state.practice;if(!p)return;showProcessing('Revisando tu banqueo…','Estamos corrigiendo todas tus respuestas y calculando el resultado.');
@@ -429,7 +512,7 @@
     let d;
     if(state.demo){let c=0,w=0,b=0;const review=p.questions.map((q,i)=>{const a=answers[i],r=!a.opcion?'BLANCO':a.opcion===q.correcta?'CORRECTA':'INCORRECTA';if(r==='CORRECTA')c++;else if(r==='INCORRECTA')w++;else b++;return {question_id:q.id,pregunta:q.pregunta,opciones:q.opciones,seleccionada:a.opcion,correcta:q.correcta,resultado:r,explicacion:q.explicacion,datito_galactico:q.datito_galactico};});d={correctas:c,incorrectas:w,blancas:b,puntaje:p.questions.length?c/p.questions.length*100:0,review};}
     else d=await api('finishBankSession',authPayload({answers,session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,feedback_mode:p.feedbackMode}));
-    clearInterval(timerInt);renderSimulationResult(d,p,'Banqueo finalizado');state.practice=null;if(!state.demo)loadDashboard().catch(()=>{});hideProcessing();
+    clearInterval(timerInt);renderSimulationResult(d,p,'Banqueo finalizado');clearPracticeSnapshot();state.practice=null;if(!state.demo)loadDashboard().catch(()=>{});hideProcessing();
   }
   function showImmediateSimResult(){
     const p=state.practice;clearInterval(timerInt);const total=p.questions.length,pct=total?Math.round(p.correct/total*100):0;
@@ -438,14 +521,14 @@
     $('resultTitle').textContent='Simulacro guiado finalizado';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent='Elegiste ver la corrección después de cada pregunta.';
     renderResultMap(review);$('resultReview').innerHTML='';$('reviewSimulationBtn')?.classList.remove('hidden');go('result');
     if(!state.demo){const answers=p.questions.map((q,i)=>{const a=p.answers[i]||{};return {question_id:q.id,opcion:a.selected==null?'':String.fromCharCode(65+a.selected),descartadas:(a.eliminated||[]).map(x=>String.fromCharCode(65+x)),marked:Boolean(a.marked),tiempo_seg:Number(a.tiempo_seg||0)};});api('recordGuidedSimulation',authPayload({session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,total_preguntas:total,correctas:p.correct,incorrectas:p.incorrect||0,blancas:p.blank||0,puntaje:pct,answers})).then(()=>{state.progress=null;}).catch(()=>{});}
-    state.practice=null;
+    clearPracticeSnapshot();state.practice=null;
   }
 
   function showBankResult(){
     const p=state.practice;clearInterval(timerInt);const total=p.questions.length,pct=total?Math.round(p.correct/total*100):0;
     $('reviewSimulationBtn')?.classList.add('hidden');$('resultTitle').textContent='¡Banqueo completado!';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent=pct>=80?'Muy buen rendimiento. Mantén la constancia.':pct>=60?'Buen avance. Revisa tus errores y vuelve a intentarlo.':'Conviene repasar los temas fallados y usar las preguntas gemelas.';$('resultMapWrap').classList.add('hidden');$('resultReview').innerHTML='';go('result');
     if(!state.demo){api('recordBankSession',authPayload({session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,total_preguntas:total,correctas:p.correct,incorrectas:p.incorrect||0,blancas:p.blank||0,puntaje:pct,feedback_mode:p.feedbackMode})).then(()=>{state.progress=null;}).catch(()=>{});}
-    state.practice=null;
+    clearPracticeSnapshot();state.practice=null;
   }
 
   async function finishSimulation(){
@@ -454,7 +537,7 @@
     let d;
     if(state.demo){let c=0,w=0,b=0;const review=p.questions.map((q,i)=>{const a=answers[i],r=!a.opcion?'BLANCO':a.opcion===q.correcta?'CORRECTA':'INCORRECTA';if(r==='CORRECTA')c++;else if(r==='INCORRECTA')w++;else b++;return {question_id:q.id,pregunta:q.pregunta,opciones:q.opciones,seleccionada:a.opcion,correcta:q.correcta,resultado:r,explicacion:q.explicacion,datito_galactico:q.datito_galactico};});d={correctas:c,incorrectas:w,blancas:b,puntaje:p.questions.length?c/p.questions.length*100:0,review};}
     else d=await api('finishSimulation',authPayload({simulation_id:p.simulationId,answers}));
-    clearInterval(timerInt);renderSimulationResult(d,p);state.practice=null;state.progress=null;hideProcessing();if(!state.demo)loadDashboard().catch(()=>{});
+    clearInterval(timerInt);renderSimulationResult(d,p);clearPracticeSnapshot();state.practice=null;state.progress=null;hideProcessing();if(!state.demo)loadDashboard().catch(()=>{});
   }
   function renderResultMap(review){
     $('resultMapWrap').classList.remove('hidden');$('resultMap').innerHTML=(review||[]).map((r,i)=>{const cls=r.marked?'marked':r.resultado==='CORRECTA'?'correct':r.resultado==='INCORRECTA'?'wrong':'blank';return `<span class="sim-q ${cls}">${i+1}${r.marked?'★':''}</span>`;}).join('');
@@ -639,6 +722,9 @@
     else{let enamPts=enam>=18?2.5:enam>=15?2:enam>=13?1.5:enam>=11?1:0;let avgPts=Math.min(2.5,Math.max(0,avg/20*2.5));academic=Math.min(5,enamPts+avgPts);desc='Graduados desde 2009: ENAM + promedio de pregrado/internado, máximo 5 puntos.';}
     const total=serPts+firstPts+fifthPts+academic;$('cvSerums').textContent=serPts.toFixed(2);$('cvFirstLevel').textContent=firstPts.toFixed(2);$('cvFifth').textContent=fifthPts.toFixed(2);$('cvAcademic').textContent=academic.toFixed(2);$('cvTotal').textContent=total.toFixed(2);$('cvExplanation').textContent=desc;
   }
+
+  window.addEventListener('pagehide',()=>savePracticeSnapshot());
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='hidden')savePracticeSnapshot();});
 
   function round1(v){return Math.round(Number(v||0)*10)/10;}
   function shuffleLocal(arr){const a=arr.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
