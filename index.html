@@ -96,7 +96,7 @@
         <button class="navbtn" data-page="progreso">📈 <span>Progreso</span></button>
         <button class="navbtn" data-page="admin" id="adminNav">🛠️ <span>Admin</span></button>
         <button class="navbtn" data-page="perfil">👤 <span>Perfil</span></button>
-        <div class="side-pet"><div>🧑‍🚀</div><b>Qbito · Nivel <span id="petLevel">1</span></b><small id="petXpText">0/100 XP</small><div class="xp"><span id="petXpBar" style="width:0%"></span></div><em>Maz nah 🚀</em></div>
+        <div class="side-pet"><div>🧑‍🚀</div><b>Qbito · Nivel <span id="petLevel">1</span></b><small id="petXpText">0/100 XP</small><div class="xp"><span id="petXpBar" style="width:0%"></span></div></div>
       </aside>
       <main class="content">
         <section id="dashboard" class="page active">
@@ -147,7 +147,29 @@
         <section id="result" class="page"><article class="card result-card"><div class="trophy">🏆</div><h1 id="resultTitle">¡Sesión completada!</h1><strong id="resultPct">0%</strong><p id="resultScore">0/0 correctas</p><p id="resultAdvice" class="muted"></p><div id="resultMapWrap" class="result-map-wrap hidden"><h3>Mapa final</h3><div class="sim-legend center-legend"><span><i class="dot correct"></i> Correcta</span><span><i class="dot wrong"></i> Incorrecta</span><span><i class="dot blank"></i> En blanco</span><span><i class="dot marked"></i> Marcada ⭐</span></div><div id="resultMap" class="sim-map result-map"></div></div><div id="resultReview" class="result-review"></div><div><button class="btn btn-primary" data-action="go-banqueo">Seguir practicando</button> <button class="btn btn-ghost" data-action="dashboard">Volver al inicio</button></div></article></section>
 
         <section id="errores" class="page"><div class="page-head"><div><h1>Mis errores</h1><p>Preguntas que has fallado y conviene volver a ver.</p></div></div><div id="errorsList" class="list-stack"></div></section>
-        <section id="progreso" class="page"><div class="page-head"><div><h1>Progreso</h1><p>Tus datos reales se actualizan con cada intento.</p></div></div><div class="stats-grid"><div class="stat card"><small>Total respondidas</small><strong id="progTotal">0</strong></div><div class="stat card"><small>Correctas</small><strong id="progCorrect">0</strong></div><div class="stat card"><small>Precisión</small><strong id="progAccuracy">—</strong></div><div class="stat card"><small>Últimas 24 h</small><strong id="prog24">0</strong></div></div></section>
+        <section id="progreso" class="page">
+          <div class="page-head"><div><h1>Progreso</h1><p>Compara tu evolución en simulacros, banqueos y batallas.</p></div><span id="progressUpdated" class="pill p-blue">Actualizando...</span></div>
+          <div class="progress-filters" id="progressFilters">
+            <button class="progress-filter active" data-progress-filter="TODOS">Todos</button>
+            <button class="progress-filter" data-progress-filter="SIMULACRO">Simulacros</button>
+            <button class="progress-filter" data-progress-filter="BANQUEO">Banqueos</button>
+            <button class="progress-filter" data-progress-filter="BATALLA">Batallas</button>
+          </div>
+          <div class="stats-grid progress-stats">
+            <div class="stat card"><small>Sesiones</small><strong id="progSessions">0</strong></div>
+            <div class="stat card"><small>Promedio</small><strong id="progAverage">—</strong></div>
+            <div class="stat card"><small>Mejor resultado</small><strong id="progBest">—</strong></div>
+            <div class="stat card"><small>Último resultado</small><strong id="progLatest">—</strong></div>
+          </div>
+          <article class="card progress-chart-card">
+            <div class="section-head"><div><h2 id="progressChartTitle">Evolución general</h2><p id="progressChartSubtitle" class="muted">Resultados por sesión.</p></div><span id="progressLegendTarget" class="pill p-green hidden">Meta</span></div>
+            <div id="progressChart" class="progress-chart"><div class="empty-chart">Aún no hay sesiones registradas.</div></div>
+          </article>
+          <article class="card">
+            <div class="section-head"><h2>Historial</h2><span class="muted tiny">Más reciente primero</span></div>
+            <div id="progressHistory" class="progress-history"><p class="muted">Aún no hay resultados.</p></div>
+          </article>
+        </section>
 
         <section id="admin" class="page">
           <div class="page-head"><div><h1>Administración</h1><p>El banco maestro ahora se administra desde Google Sheets.</p></div><span id="adminRoleBadge" class="pill p-red">Solo administrador</span></div>
@@ -194,10 +216,30 @@
             <div class="cv-actions"><button class="btn btn-blue" data-action="save-profile">Guardar datos</button></div>
             <div class="source-note">Este cálculo es orientativo y usa las reglas publicadas para el Concurso Nacional de Admisión al Residentado Médico 2026. Casos históricos especiales de SERUMS deben verificarse con CONAREME.</div>
           </article>
+          <article id="dreamPlazaCard" class="card dream-card">
+            <div class="section-head"><div><h2>🎯 Mi plaza soñada</h2><p class="muted">Elige una plaza de Residentado y BANQO comparará tus simulacros con una referencia histórica.</p></div><span class="pill p-amber">Solo simulacros</span></div>
+            <div class="dream-form-grid">
+              <label>Especialidad<select id="dreamSpecialty"><option value="">Selecciona especialidad</option></select></label>
+              <label>Plaza / sede<select id="dreamPlaza"><option value="">Selecciona una plaza</option></select></label>
+            </div>
+            <div id="dreamReference" class="dream-reference hidden">
+              <div><small>Referencia histórica</small><strong id="dreamTargetScore">—</strong><span>/100</span></div>
+              <div><small>Mi proyección actual</small><strong id="dreamCurrentScore">—</strong><span>/100</span></div>
+              <div><small>Diferencia</small><strong id="dreamGap">—</strong><span>pts</span></div>
+            </div>
+            <div id="dreamChart" class="dream-chart"><div class="empty-chart">Selecciona una plaza para ver tu evolución.</div></div>
+            <p id="dreamNote" class="source-note">La referencia es histórica y orientativa; no garantiza el puntaje de corte de un proceso futuro.</p>
+            <div class="dream-actions"><button class="btn btn-blue" data-action="save-profile">Guardar plaza soñada</button></div>
+          </article>
         </section>
       </main>
     </div>
   </section>
+
+
+  <div id="feedbackModeModal" class="modal hidden"><div class="modal-card feedback-mode-card"><div class="qbito giant">🧑‍🚀</div><h2>¿Cuándo quieres ver las respuestas?</h2><p class="muted">Elige cómo quieres resolver esta sesión antes de empezar. Puedes cambiarlo en cada banqueo, simulacro o examen.</p><div class="feedback-mode-options"><button class="mode-choice" data-action="choose-feedback-immediate"><span>⚡</span><b>Después de cada pregunta</b><small>Te mostramos la respuesta correcta, explicación y Datito galáctico apenas marques tu respuesta. Requiere una consulta al servidor por pregunta.</small></button><button class="mode-choice recommended" data-action="choose-feedback-end"><span>🏁</span><b>Al finalizar</b><small>Respondes todo primero y BANQO corrige la sesión completa al final. Es más rápido y se parece más a un examen real.</small><em>Recomendado</em></button></div><button class="btn btn-ghost full" data-action="cancel-feedback-mode">Cancelar</button></div></div>
+
+  <div id="errorDetailModal" class="modal hidden"><div class="modal-card error-detail-card"><button class="modal-x" data-action="close-error-detail">×</button><div id="errorDetailContent"><p>Cargando...</p></div></div></div>
 
   <div id="sessionModal" class="modal hidden"><div class="modal-card"><div class="qbito giant">🛰️</div><h2>Sesión iniciada en otro dispositivo</h2><p>Esta sesión dejó de ser la sesión activa de la cuenta.</p><button class="btn btn-blue full" data-action="session-kicked">Volver al login</button></div></div>
 
