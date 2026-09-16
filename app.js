@@ -130,7 +130,7 @@
   async function api(action, payload={}){
     if(!API_URL) throw new Error('API_NOT_CONFIGURED');
     const controller = new AbortController();
-    const timeout = setTimeout(()=>controller.abort(), 20000);
+    const timeout = setTimeout(()=>controller.abort(), 60000);
     try{
       const res=await fetch(API_URL,{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},body:JSON.stringify({action,...payload}),signal:controller.signal});
       const text=await res.text();
@@ -150,7 +150,7 @@
       INVALID_CREDENTIALS:'Correo o contraseña incorrectos.',EMAIL_EXISTS:'Ese correo ya está registrado.',WEAK_PASSWORD:'La contraseña debe tener al menos 6 caracteres, una mayúscula y un número.',
       INVALID_EMAIL:'Ingresa un correo válido.',NAME_REQUIRED:'Completa nombre y apellido.',SESSION_NOT_ACTIVE:'La cuenta se inició en otro dispositivo.',FREE_LIMIT:'Ya usaste tus 15 preguntas gratuitas de las últimas 24 horas.',
       NO_QUESTIONS:'No hay preguntas publicadas con esos filtros.',ACTIVE_SIMULATION_EXISTS:'Ya tienes un simulacro activo. Finalízalo antes de iniciar otro.',RATE_LIMIT:'Demasiadas acciones seguidas. Espera un momento.',
-      API_TIMEOUT:'La API tardó demasiado. Intenta nuevamente.',API_INVALID_RESPONSE:'La API respondió con un formato inesperado.',API_NOT_CONFIGURED:'Falta configurar la URL de Apps Script.'
+      API_TIMEOUT:'Google Apps Script está tardando más de lo normal. Tu progreso sigue guardado; intenta nuevamente en unos segundos.',API_INVALID_RESPONSE:'La API respondió con un formato inesperado.',API_NOT_CONFIGURED:'Falta configurar la URL de Apps Script.'
     };
     return m[c]||`Ocurrió un error: ${c}`;
   }
@@ -291,9 +291,9 @@
     if(state.demo){ populateDemoFilters(); renderDashboard({total:0,correct:0,accuracy:null,last_24h:0,remaining:15,premium:false,admin:false,unlimited:false,plan:'Free',xp:0}); loadProfileDemo(); }
     else {
       startSessionMonitor();
-      const jobs=[loadFilters(),loadDashboard(),loadProfile()];
-      if(restored||options.preferRestore)Promise.allSettled(jobs);
-      else await Promise.allSettled(jobs);
+      const bootJob=loadBootstrap();
+      if(restored||options.preferRestore) bootJob.catch(()=>{});
+      else await bootJob.catch(()=>{});
     }
     if(!restored)go('dashboard');
   }
@@ -303,13 +303,21 @@
   }
   function startSessionMonitor(){
     clearInterval(sessionInt); const sec=Number(CFG.SESSION_CHECK_SECONDS||30);
-    sessionInt=setInterval(async()=>{ if(state.demo||!state.user||!state.token)return; try{await api('checkSession',authPayload());}catch(e){if(String(e?.code||e?.message).includes('SESSION_NOT_ACTIVE'))handleKicked();}},Math.max(15,sec)*1000);
+    sessionInt=setInterval(async()=>{ if(state.demo||!state.user||!state.token)return; try{await api('checkSession',authPayload());}catch(e){if(String(e?.code||e?.message).includes('SESSION_NOT_ACTIVE'))handleKicked();}},Math.max(60,sec)*1000);
   }
   function handleKicked(){ clearInterval(sessionInt); clearInterval(timerInt); clearPracticeSnapshot(); state.practice=null; $('sessionModal')?.classList.remove('hidden'); }
 
   function populateDemoFilters(){
     const specs=[...new Set(demoQuestions.map(q=>q.especialidad))], topics=[...new Set(demoQuestions.map(q=>q.tema))], subs=[...new Set(demoQuestions.map(q=>q.subtema))];
     fillSelect('bankSpecialty',specs,'Todas');fillSelect('bankTopic',topics,'Todos');fillSelect('bankSubtopic',subs,'Todos');
+  }
+  async function loadBootstrap(){
+    const d=await api('bootstrap',authPayload());
+    if(d.user){ state.user=d.user; writeJSON('banqo_user',state.user); $('userName').textContent=state.user.nombre||'Usuario'; renderGoalGreeting(state.user.objetivo); }
+    if(d.filters){ state.filters=d.filters; writeJSON('banqo_filters_cache',{at:Date.now(),data:d.filters}); fillSelect('bankSpecialty',d.filters.especialidades||[],'Todas'); fillSelect('bankTopic',d.filters.temas||[],'Todos'); fillSelect('bankSubtopic',d.filters.subtemas||[],'Todos'); }
+    if(d.dashboard){ state.dashboard=d.dashboard; renderDashboard(d.dashboard); }
+    if(d.profile){ state.profile=d.profile; state.dreamSpecialty=d.profile.dream_specialty||''; state.dreamSelected=d.profile.dream_hospital||''; }
+    return d;
   }
   async function loadFilters(){
     const cached=readJSON('banqo_filters_cache');
