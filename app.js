@@ -28,7 +28,11 @@
     progress: null,
     progressFilter: 'TODOS',
     dreamPlazas: [],
-    dreamSelected: null
+    dreamSedes: [],
+    dreamSelected: null,
+    dreamSpecialty: '',
+    lastSimulationReview: null,
+    reviewReturnPage: 'result'
   };
 
   function readJSON(k){ try{return JSON.parse(localStorage.getItem(k)||'null');}catch(e){return null;} }
@@ -40,6 +44,8 @@
     return `${browser} · ${os}`;
   }
   function toast(msg, ms=3200){ const t=$('toast'); if(!t)return; t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),ms); }
+  function showProcessing(title='Procesando…',text='Un momento, BANQO está trabajando.'){$('processingTitle').textContent=title;$('processingText').textContent=text;$('processingOverlay')?.classList.remove('hidden');}
+  function hideProcessing(){$('processingOverlay')?.classList.add('hidden');}
   function showOnly(id){ ['landing','auth','app'].forEach(x=>$(x)?.classList.add('hidden')); $(id)?.classList.remove('hidden'); }
   function showAuth(which){
     showOnly('auth');
@@ -124,6 +130,7 @@
 
   function bindActions(){
     document.addEventListener('click',async e=>{
+      const reviewJump=e.target.closest('[data-review-index]'); if(reviewJump){ renderSimulationReviewDetail(Number(reviewJump.dataset.reviewIndex)); return; }
       const jump=e.target.closest('[data-sim-index]'); if(jump){ jumpSim(Number(jump.dataset.simIndex)); return; }
       const errCard=e.target.closest('[data-error-id]'); if(errCard){ await openErrorDetail(errCard.dataset.errorId); return; }
       const pf=e.target.closest('[data-progress-filter]'); if(pf){ setProgressFilter(pf.dataset.progressFilter); return; }
@@ -144,11 +151,13 @@
         else if(a==='go-banqueo')go('banqueo');
         else if(a==='start-bank')openFeedbackMode('bank');
         else if(a==='start-sim')openFeedbackMode('sim');
-        else if(a==='choose-feedback-immediate')await confirmFeedbackMode('immediate');
-        else if(a==='choose-feedback-end')await confirmFeedbackMode('end');
+        else if(a==='choose-feedback-immediate')selectFeedbackMode('immediate');
+        else if(a==='choose-feedback-end')selectFeedbackMode('end');
+        else if(a==='confirm-feedback-mode')await confirmFeedbackMode();
         else if(a==='cancel-feedback-mode')closeFeedbackMode();
         else if(a==='blank-answer')await blankAnswer();
         else if(a==='clear-eliminations')clearEliminations();
+        else if(a==='prev-question')prevQuestion();
         else if(a==='next-question')await nextQuestion();
         else if(a==='mark-review')toggleMarkReview();
         else if(a==='finish-sim')await finishSimulation();
@@ -156,10 +165,14 @@
         else if(a==='bookmark')await toggleBookmark();
         else if(a==='cancel-practice'){ if(confirm('¿Salir de esta sesión?')){clearInterval(timerInt);go(state.practice?.kind==='sim'?'simulacros':'banqueo');state.practice=null;} }
         else if(a==='save-profile')await saveProfile();
+        else if(a==='review-last-simulation')openSimulationReview(state.lastSimulationReview,'result');
+        else if(a==='review-simulation')await loadSavedSimulationReview(btn.dataset.simulationId);
+        else if(a==='close-sim-review')go(state.reviewReturnPage||'result');
         else if(a==='close-error-detail')$('errorDetailModal')?.classList.add('hidden');
         else if(a==='session-kicked'){ $('sessionModal')?.classList.add('hidden'); clearAuth(); showAuth('login'); }
         else if(['preview-import','run-import','refresh-admin'].includes(a))toast('El banco maestro se administra directamente en Google Sheets.');
       }catch(err){
+        hideProcessing();
         if(String(err?.code||err?.message).includes('SESSION_NOT_ACTIVE')){ handleKicked(); return; }
         toast(friendlyError(err),4500);
       }
@@ -174,8 +187,9 @@
   }
   function bindProfileInputs(){
     ['profileGradYear','profileEnamScore','profilePregradAvg','profileSerumsDifficulty','profileFirstLevelYears','profileFifthSuperior'].forEach(id=>$(id)?.addEventListener('input',()=>{renderCv();renderDreamProjection();}));
-    $('dreamSpecialty')?.addEventListener('change',()=>{populateDreamPlazas($('dreamSpecialty').value);renderDreamProjection();});
-    $('dreamPlaza')?.addEventListener('change',()=>{state.dreamSelected=$('dreamPlaza').value||'';renderDreamProjection();});
+    $('dreamSpecialty')?.addEventListener('change',()=>{state.dreamSpecialty=$('dreamSpecialty').value||'';populateDreamPlazas(state.dreamSpecialty);renderDreamProjection();});
+    $('dreamPlaza')?.addEventListener('change',()=>{const v=$('dreamPlaza').value||'';$('dreamHospitalOtherWrap')?.classList.toggle('hidden',v!=='__OTHER__');state.dreamSelected=v==='__OTHER__'?($('dreamHospitalOther')?.value||''):v;renderDreamProjection();});
+    $('dreamHospitalOther')?.addEventListener('input',()=>{if($('dreamPlaza')?.value==='__OTHER__'){state.dreamSelected=$('dreamHospitalOther').value||'';renderDreamProjection();}});
     $('profileGoal')?.addEventListener('change',()=>{$('dreamPlazaCard')?.classList.toggle('hidden',$('profileGoal').value!=='ENARM');});
   }
 
@@ -186,8 +200,8 @@
     setAuth(d.user,d.session_token); await enterApp(); toast('Cuenta creada. Bienvenido a BANQO 🚀');
   }
   async function login(){
-    const d=await api('login',{email:$('loginEmail').value.trim(),password:$('loginPass').value,device:deviceLabel()});
-    setAuth(d.user,d.session_token); await enterApp();
+    showProcessing('Validando credenciales…','Estamos iniciando tu sesión de BANQO.');
+    try{const d=await api('login',{email:$('loginEmail').value.trim(),password:$('loginPass').value,device:deviceLabel()});setAuth(d.user,d.session_token);await enterApp();}finally{hideProcessing();}
   }
   function setAuth(user,token){ state.demo=false; state.user=user; state.token=token; writeJSON('banqo_user',user); localStorage.setItem('banqo_session_token',token); }
   function clearAuth(){ state.user=null;state.token='';state.demo=false;localStorage.removeItem('banqo_user');localStorage.removeItem('banqo_session_token');clearInterval(sessionInt); }
@@ -205,6 +219,9 @@
     $('hello').textContent=`¡Hola, ${state.user?.nombre||'Usuario'}! 👋`;
     renderGoalGreeting(state.user?.objetivo);
     $('sessionInfo').textContent=state.demo?'Demo local':`${deviceLabel()} · una sola sesión activa`;
+    $('adminNav')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()!=='ADMIN');
+    $('adminLocked')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()==='ADMIN');
+    $('adminPanel')?.classList.toggle('hidden',String(state.user?.role||'USER').toUpperCase()!=='ADMIN');
     if(state.demo){ populateDemoFilters(); renderDashboard({total:0,correct:0,accuracy:null,last_24h:0,remaining:15,premium:false,plan:'Free',xp:0}); loadProfileDemo(); }
     else { await Promise.all([loadFilters(),loadDashboard(),loadProfile()]); startSessionMonitor(); }
     go('dashboard');
@@ -249,29 +266,26 @@
   }
 
   function openFeedbackMode(kind){
-    state.pendingStart={kind};
+    state.pendingStart={kind,mode:null};
+    qsa('#feedbackModeModal .mode-choice').forEach(x=>x.classList.remove('selected'));
+    if($('feedbackConfirmBtn'))$('feedbackConfirmBtn').disabled=true;
     $('feedbackModeModal')?.classList.remove('hidden');
+  }
+  function selectFeedbackMode(mode){
+    if(!state.pendingStart)return;
+    state.pendingStart.mode=mode;
+    qsa('#feedbackModeModal .mode-choice').forEach(x=>x.classList.toggle('selected',x.dataset.mode===mode));
+    if($('feedbackConfirmBtn'))$('feedbackConfirmBtn').disabled=false;
   }
   function closeFeedbackMode(){
     $('feedbackModeModal')?.classList.add('hidden');
     state.pendingStart=null;
   }
-  async function confirmFeedbackMode(mode){
-    const kind=state.pendingStart?.kind;
-    if(!kind)return;
-    const modal=$('feedbackModeModal');
-    modal?.classList.add('is-loading');
-    qsa('#feedbackModeModal .mode-choice,#feedbackModeModal [data-action="cancel-feedback-mode"]').forEach(x=>x.disabled=true);
-    toast('Preparando preguntas…');
-    try{
-      if(kind==='bank') await startBank(mode);
-      else await startSim(mode);
-      modal?.classList.add('hidden');
-      state.pendingStart=null;
-    } finally {
-      modal?.classList.remove('is-loading');
-      qsa('#feedbackModeModal .mode-choice,#feedbackModeModal [data-action="cancel-feedback-mode"]').forEach(x=>x.disabled=false);
-    }
+  async function confirmFeedbackMode(){
+    const kind=state.pendingStart?.kind,mode=state.pendingStart?.mode;
+    if(!kind||!mode){toast('Selecciona primero cuándo quieres ver las respuestas.');return;}
+    showProcessing('Preparando preguntas…','BANQO está armando tu sesión.');
+    try{if(kind==='bank')await startBank(mode);else await startSim(mode);$('feedbackModeModal')?.classList.add('hidden');state.pendingStart=null;}finally{hideProcessing();}
   }
 
   async function startBank(feedbackMode='immediate'){
@@ -279,9 +293,9 @@
     if(state.demo){
       let pool=demoQuestions.slice(),src=sourceSelected('bankSources'); if(src!=='Todos')pool=pool.filter(q=>q.examen===src);
       const spec=$('bankSpecialty').value,topic=$('bankTopic').value,sub=$('bankSubtopic').value; if(spec)pool=pool.filter(q=>q.especialidad===spec);if(topic)pool=pool.filter(q=>q.tema===topic);if(sub)pool=pool.filter(q=>q.subtema===sub);
-      questions=shuffleLocal(pool).slice(0,Number($('bankCount').value||10));
+      const rawCount=Math.max(0,Math.min(200,Number($('bankCount').value||0)));questions=shuffleLocal(pool).slice(0,rawCount===0?200:rawCount);
     } else {
-      const d=await api('getQuestions',authPayload({examen:sourceSelected('bankSources'),especialidad:$('bankSpecialty').value,tema:$('bankTopic').value,subtema:$('bankSubtopic').value,cantidad:Number($('bankCount').value||10),only_new:$('onlyNew').checked,only_failed:$('onlyFailed').checked,only_bookmarked:$('onlyBookmarked').checked}));
+      const d=await api('getQuestions',authPayload({examen:sourceSelected('bankSources'),especialidad:$('bankSpecialty').value,tema:$('bankTopic').value,subtema:$('bankSubtopic').value,cantidad:Math.max(0,Math.min(200,Number($('bankCount').value||0))),only_new:$('onlyNew').checked,only_failed:$('onlyFailed').checked,only_bookmarked:$('onlyBookmarked').checked}));
       questions=d.questions||[]; if(d.twin_count)toast(`Incluimos ${d.twin_count} pregunta gemela pendiente 🧬`);
     }
     if(!questions.length){toast('No hay preguntas publicadas con esos filtros. En Google Sheets cambia “publicada” a SI en algunas filas.',5000);return;}
@@ -291,11 +305,11 @@
   async function startSim(feedbackMode='end'){
     let d;
     if(feedbackMode==='immediate'){
-      if(state.demo){let pool=demoQuestions.slice(),src=sourceSelected('simSources');if(src!=='Todos')pool=pool.filter(q=>q.examen===src);const count=Math.min(Number($('simCount').value||10),pool.length);d={simulation_id:null,questions:shuffleLocal(pool).slice(0,count)};}
-      else d=await api('getQuestions',authPayload({examen:sourceSelected('simSources'),cantidad:Number($('simCount').value||10)}));
+      if(state.demo){let pool=demoQuestions.slice(),src=sourceSelected('simSources');if(src!=='Todos')pool=pool.filter(q=>q.examen===src);const raw=Math.max(0,Math.min(200,Number($('simCount').value||0))),count=Math.min(raw===0?200:raw,pool.length);d={simulation_id:null,questions:shuffleLocal(pool).slice(0,count)};}
+      else d=await api('getQuestions',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));
     } else {
-      if(state.demo){let pool=demoQuestions.slice(),src=sourceSelected('simSources');if(src!=='Todos')pool=pool.filter(q=>q.examen===src);const count=Math.min(Number($('simCount').value||10),pool.length);d={simulation_id:'demo-'+Date.now(),questions:shuffleLocal(pool).slice(0,count)};}
-      else d=await api('startSimulation',authPayload({examen:sourceSelected('simSources'),cantidad:Number($('simCount').value||10)}));
+      if(state.demo){let pool=demoQuestions.slice(),src=sourceSelected('simSources');if(src!=='Todos')pool=pool.filter(q=>q.examen===src);const raw=Math.max(0,Math.min(200,Number($('simCount').value||0))),count=Math.min(raw===0?200:raw,pool.length);d={simulation_id:'demo-'+Date.now(),questions:shuffleLocal(pool).slice(0,count)};}
+      else d=await api('startSimulation',authPayload({examen:sourceSelected('simSources'),cantidad:Math.max(0,Math.min(200,Number($('simCount').value||0)))}));
     }
     if(!(d.questions||[]).length){toast('No hay preguntas suficientes para iniciar el simulacro.');return;}
     beginPractice('sim',d.questions,d.simulation_id||null,feedbackMode);
@@ -310,20 +324,32 @@
   function currentSaved(){return state.practice?.answers?.[state.practice.index]||null;}
   function renderQuestion(){
     const p=state.practice,q=currentQuestion(); if(!p||!q)return; const sim=isSimKind(p),saved=currentSaved();
-    p.answered=false;p.selected=saved?.selected??null;p.eliminated=new Set(saved?.eliminated||[]);p.questionStart=Date.now();
+    p.answered=Boolean(saved?.result&&p.feedbackMode==='immediate');p.selected=saved?.selected??null;p.eliminated=new Set(saved?.eliminated||[]);p.questionStart=Date.now();
     const opts=normalizeOptions(q);
     $('qPos').textContent=`Pregunta ${p.index+1} de ${p.questions.length}`;$('qProgress').style.width=`${(p.index+1)/p.questions.length*100}%`;$('qOrigin').textContent=q.examen||'BANQO';$('qTopic').textContent=[q.especialidad,q.tema].filter(Boolean).join(' · ')||'General';$('qText').textContent=q.pregunta||q.question_text||'';
     $('qDifficulty').classList.add('hidden');$('feedback').innerHTML='';$('notePanel').classList.add('hidden');$('personalNote').value='';$('communityStats').classList.add('hidden');$('bookmarkBtn').classList.add('hidden');
     $('markReviewBtn').classList.toggle('hidden',!sim);$('bankSideCard').classList.toggle('hidden',sim);$('simSideCard').classList.toggle('hidden',!sim);
     if(sim){$('markReviewBtn').classList.toggle('active',Boolean(saved?.marked));$('markReviewBtn').textContent=saved?.marked?'★ Marcada para revisar':'☆ Marcar para revisar';} else {$('galaxyTip').textContent=isEndMode(p)?'Modo examen: respuestas y explicaciones al finalizar.':'Primero responde. Luego Qbito te mostrará una clave de alto rendimiento.';}
     const helper=document.querySelector('.question-helper small'); if(helper) helper.innerHTML=isEndMode(p)?'Marca tu alternativa o usa <strong>✕</strong> para descartar. La corrección aparecerá al finalizar la sesión.':'Toca una alternativa para responder directamente o usa <strong>✕</strong> para ir descartando sin responder.';
-    $('nextBtn').disabled=!(sim&&isEndMode(p));$('nextBtn').textContent=sim&&p.index===p.questions.length-1?'Finalizar':'Siguiente';
+    if($('prevBtn'))$('prevBtn').disabled=p.index===0;
+    $('nextBtn').disabled=p.answered?false:!(isEndMode(p));$('nextBtn').textContent=p.index===p.questions.length-1?(sim?'Finalizar':'Ver resultado'):'Siguiente';
     $('options').innerHTML=opts.map((o,i)=>`<div class="option-row" data-row="${i}"><button class="option-answer" data-opt="${i}"><span class="letter">${String.fromCharCode(65+i)}</span><span>${esc(o)}</span></button><button class="discard-option" data-discard="${i}" type="button" title="Descartar sin responder">${p.eliminated.has(i)?'↩':'✕'}</button></div>`).join('');
     qsa('#options .option-answer').forEach(o=>o.addEventListener('click',()=>{const i=Number(o.dataset.opt); if(isEndMode(p)) selectDeferred(i); else if(sim) submitImmediateSim(i); else submitBank(i,false);}));
     qsa('#options .discard-option').forEach(o=>o.addEventListener('click',ev=>{ev.stopPropagation();toggleEliminate(Number(o.dataset.discard));}));
-    p.eliminated.forEach(i=>applyEliminationVisual(i,true)); if(sim&&p.selected!=null)document.querySelector(`.option-answer[data-opt="${p.selected}"]`)?.classList.add('selected-sim');
+    p.eliminated.forEach(i=>applyEliminationVisual(i,true)); if(p.selected!=null)document.querySelector(`.option-answer[data-opt="${p.selected}"]`)?.classList.add('selected-sim');
+    if(saved?.result&&p.feedbackMode==='immediate')restoreSavedFeedback(saved);
     updateEliminationHint(); renderSimMap();
     if(q.imagen_url){$('qImage').src=q.imagen_url;$('qImageWrap').classList.remove('hidden');}else $('qImageWrap').classList.add('hidden');
+  }
+  function restoreSavedFeedback(saved){
+    const letters=['A','B','C','D','E'];
+    qsa('.option-answer').forEach((el,i)=>{el.disabled=true;const letter=letters[i];if(letter===saved.correcta)el.classList.add('correct');if(saved.selected===i&&letter!==saved.correcta)el.classList.add('wrong');});
+    qsa('.discard-option').forEach(x=>x.disabled=true);
+    const title=saved.result==='CORRECTA'?'✅ Correcta':saved.result==='BLANCO'?'⬜ En blanco':'❌ Incorrecta';
+    $('feedback').innerHTML=`<div class="feedback-box ${saved.result==='CORRECTA'?'good':'bad'}"><h3>${title}</h3><p><b>Respuesta correcta: ${esc(saved.correcta||'')}</b></p><p>${esc(saved.explicacion||'Comentario pendiente de revisión.')}</p></div>`;
+    $('galaxyTip').textContent=saved.datito_galactico||'Sigue practicando.';
+    if(saved.estadisticas)renderCommunity(saved.estadisticas);
+    $('nextBtn').disabled=false;$('notePanel').classList.remove('hidden');$('bookmarkBtn').classList.remove('hidden');
   }
   function applyEliminationVisual(index,on){const row=document.querySelector(`[data-row="${index}"]`),ans=document.querySelector(`.option-answer[data-opt="${index}"]`),btn=document.querySelector(`.discard-option[data-discard="${index}"]`);row?.classList.toggle('eliminated',on);if(ans&&!isSimKind())ans.disabled=on;if(btn)btn.textContent=on?'↩':'✕';}
   function toggleEliminate(index){const p=state.practice;if(!p||p.answered)return;if(p.eliminated.has(index)){p.eliminated.delete(index);applyEliminationVisual(index,false);}else{if(isSimKind(p)&&p.selected===index)p.selected=null;p.eliminated.add(index);applyEliminationVisual(index,true);}if(isSimKind(p))saveSimState();updateEliminationHint();renderQuestionSelectionOnly();}
@@ -361,10 +387,10 @@
     qsa('.option-answer,.discard-option').forEach(x=>x.classList.add('processing'));
     try{
       if(state.demo){const correct=q.correcta,result=!op?'BLANCO':op===correct?'CORRECTA':'INCORRECTA';d={resultado:result,correcta:correct,explicacion:q.explicacion,datito_galactico:q.datito_galactico,estadisticas:{intentos:124,pct_acierto:68,pct_fallo:26,pct_blanco:6,dificultad:'Media',descartes:{A:40,B:10,C:50,D:62,E:0}},twin_scheduled:result==='INCORRECTA'};}
-      else d=await api('submitAnswer',authPayload({question_id:q.id,opcion:op,tiempo_seg:elapsed,descartadas:[...p.eliminated].map(i=>letters[i])}));
+      else d=await api('submitAnswer',authPayload({question_id:q.id,opcion:op,tiempo_seg:elapsed,descartadas:[...p.eliminated].map(i=>letters[i]),mode:isSimKind(p)?'SIMULACRO':'BANQUEO',simulation_id:isSimKind(p)?p.sessionId:''}));
     } finally { qsa('.option-answer,.discard-option').forEach(x=>x.classList.remove('processing')); }
     p.answered=true;p.selected=index;if(d.resultado==='CORRECTA')p.correct++;else if(d.resultado==='INCORRECTA')p.incorrect++;else p.blank++;
-    if(isSimKind(p)){const old=p.answers[p.index]||{};p.answers[p.index]={...old,selected:index??null,isBlank:index==null,eliminated:[...p.eliminated],marked:Boolean(old.marked),tiempo_seg:elapsed,result:d.resultado,correcta:d.correcta};}
+    {const old=p.answers[p.index]||{};p.answers[p.index]={...old,selected:index??null,isBlank:index==null,eliminated:[...p.eliminated],marked:Boolean(old.marked),tiempo_seg:elapsed,result:d.resultado,correcta:d.correcta,explicacion:d.explicacion||'',datito_galactico:d.datito_galactico||'',estadisticas:d.estadisticas||{}};}
     qsa('.option-answer').forEach((el,i)=>{el.disabled=true;const letter=letters[i];if(letter===d.correcta)el.classList.add('correct');if(index===i&&letter!==d.correcta)el.classList.add('wrong');});qsa('.discard-option').forEach(x=>x.disabled=true);
     const title=d.resultado==='CORRECTA'?'✅ Correcta':d.resultado==='BLANCO'?'⬜ En blanco':'❌ Incorrecta';
     $('feedback').innerHTML=`<div class="feedback-box ${d.resultado==='CORRECTA'?'good':'bad'}"><h3>${title}</h3><p><b>Respuesta correcta: ${esc(d.correcta)}</b></p><p>${esc(d.explicacion||'Comentario pendiente de revisión.')}</p>${d.twin_scheduled?'<small>🧬 BANQO programó una pregunta gemela para comprobar este concepto más adelante.</small>':''}</div>`;
@@ -375,6 +401,11 @@
   function renderCommunity(s){
     const el=$('communityStats');el.classList.remove('hidden'); const cls=s.dificultad||'Sin clasificación'; $('qDifficulty').textContent=cls;$('qDifficulty').classList.remove('hidden');
     el.innerHTML=`<h4>Estadísticas de la comunidad</h4><div class="community-grid"><span><b>${round1(s.pct_acierto)}%</b><small>Aciertos</small></span><span><b>${round1(s.pct_fallo)}%</b><small>Fallos</small></span><span><b>${round1(s.pct_blanco)}%</b><small>En blanco</small></span></div><small>${Number(s.intentos||0)} intentos · dificultad ${esc(cls)}</small><div class="discard-mini">Descartes: ${['A','B','C','D','E'].filter(k=>s.descartes&&s.descartes[k]).map(k=>`${k} ${s.descartes[k]}`).join(' · ')||'aún sin datos'}</div>`;
+  }
+  function prevQuestion(){
+    const p=state.practice;if(!p||p.index<=0)return;
+    if(isEndMode(p))saveSimState();
+    p.index--;renderQuestion();
   }
   async function nextQuestion(){
     const p=state.practice;if(!p)return;
@@ -393,38 +424,62 @@
     p.index++;renderQuestion();
   }
   async function finishDeferredBank(){
-    const p=state.practice;if(!p)return;
+    const p=state.practice;if(!p)return;showProcessing('Revisando tu banqueo…','Estamos corrigiendo todas tus respuestas y calculando el resultado.');
     const answers=p.questions.map((q,i)=>{const a=p.answers[i]||{};return {question_id:q.id,opcion:a.selected==null?'':String.fromCharCode(65+a.selected),descartadas:(a.eliminated||[]).map(x=>String.fromCharCode(65+x)),tiempo_seg:Number(a.tiempo_seg||0)};});
     let d;
     if(state.demo){let c=0,w=0,b=0;const review=p.questions.map((q,i)=>{const a=answers[i],r=!a.opcion?'BLANCO':a.opcion===q.correcta?'CORRECTA':'INCORRECTA';if(r==='CORRECTA')c++;else if(r==='INCORRECTA')w++;else b++;return {question_id:q.id,pregunta:q.pregunta,opciones:q.opciones,seleccionada:a.opcion,correcta:q.correcta,resultado:r,explicacion:q.explicacion,datito_galactico:q.datito_galactico};});d={correctas:c,incorrectas:w,blancas:b,puntaje:p.questions.length?c/p.questions.length*100:0,review};}
     else d=await api('finishBankSession',authPayload({answers,session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,feedback_mode:p.feedbackMode}));
-    clearInterval(timerInt);renderSimulationResult(d,p,'Banqueo finalizado');state.practice=null;if(!state.demo)loadDashboard().catch(()=>{});
+    clearInterval(timerInt);renderSimulationResult(d,p,'Banqueo finalizado');state.practice=null;if(!state.demo)loadDashboard().catch(()=>{});hideProcessing();
   }
   function showImmediateSimResult(){
     const p=state.practice;clearInterval(timerInt);const total=p.questions.length,pct=total?Math.round(p.correct/total*100):0;
-    $('resultTitle').textContent='Simulacro guiado finalizado';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent='Elegiste ver la corrección después de cada pregunta.';$('resultMapWrap').classList.remove('hidden');$('resultMap').innerHTML=p.questions.map((q,i)=>{const a=p.answers[i]||{},cls=a.result==='CORRECTA'?'correct':a.result==='INCORRECTA'?'wrong':'blank';return `<span class="sim-q ${cls}${a.marked?' marked':''}">${i+1}${a.marked?'★':''}</span>`;}).join('');$('resultReview').innerHTML='';go('result');
-    if(!state.demo){api('recordGuidedSimulation',authPayload({session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,total_preguntas:total,correctas:p.correct,incorrectas:p.incorrect||0,blancas:p.blank||0,puntaje:pct})).then(()=>{state.progress=null;}).catch(()=>{});}
+    const review=p.questions.map((q,i)=>{const a=p.answers[i]||{};return {question_id:q.id,pregunta:q.pregunta||q.question_text||'',opciones:q.opciones||Object.fromEntries(normalizeOptions(q).map((x,j)=>[String.fromCharCode(65+j),x])),seleccionada:a.selected==null?'':String.fromCharCode(65+a.selected),correcta:a.correcta||'',resultado:a.result||'BLANCO',explicacion:a.explicacion||'',datito_galactico:a.datito_galactico||'',marked:Boolean(a.marked)};});
+    state.lastSimulationReview={simulation_id:p.sessionId,review};localStorage.setItem('banqo_last_sim_review',JSON.stringify(state.lastSimulationReview));
+    $('resultTitle').textContent='Simulacro guiado finalizado';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent='Elegiste ver la corrección después de cada pregunta.';
+    renderResultMap(review);$('resultReview').innerHTML='';$('reviewSimulationBtn')?.classList.remove('hidden');go('result');
+    if(!state.demo){const answers=p.questions.map((q,i)=>{const a=p.answers[i]||{};return {question_id:q.id,opcion:a.selected==null?'':String.fromCharCode(65+a.selected),descartadas:(a.eliminated||[]).map(x=>String.fromCharCode(65+x)),marked:Boolean(a.marked),tiempo_seg:Number(a.tiempo_seg||0)};});api('recordGuidedSimulation',authPayload({session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,total_preguntas:total,correctas:p.correct,incorrectas:p.incorrect||0,blancas:p.blank||0,puntaje:pct,answers})).then(()=>{state.progress=null;}).catch(()=>{});}
     state.practice=null;
   }
+
   function showBankResult(){
     const p=state.practice;clearInterval(timerInt);const total=p.questions.length,pct=total?Math.round(p.correct/total*100):0;
-    $('resultTitle').textContent='¡Banqueo completado!';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent=pct>=80?'Muy buen rendimiento. Mantén la constancia.':pct>=60?'Buen avance. Revisa tus errores y vuelve a intentarlo.':'Conviene repasar los temas fallados y usar las preguntas gemelas.';$('resultMapWrap').classList.add('hidden');$('resultReview').innerHTML='';go('result');
+    $('reviewSimulationBtn')?.classList.add('hidden');$('resultTitle').textContent='¡Banqueo completado!';$('resultPct').textContent=`${pct}%`;$('resultScore').textContent=`${p.correct}/${total} correctas`;$('resultAdvice').textContent=pct>=80?'Muy buen rendimiento. Mantén la constancia.':pct>=60?'Buen avance. Revisa tus errores y vuelve a intentarlo.':'Conviene repasar los temas fallados y usar las preguntas gemelas.';$('resultMapWrap').classList.add('hidden');$('resultReview').innerHTML='';go('result');
     if(!state.demo){api('recordBankSession',authPayload({session_id:p.sessionId,examen:p.source,fecha_inicio:p.startedAt,total_preguntas:total,correctas:p.correct,incorrectas:p.incorrect||0,blancas:p.blank||0,puntaje:pct,feedback_mode:p.feedbackMode})).then(()=>{state.progress=null;}).catch(()=>{});}
     state.practice=null;
   }
 
   async function finishSimulation(){
-    const p=state.practice;if(!p||p.kind!=='sim')return;if(!confirm('¿Finalizar el simulacro? Después verás las respuestas y explicaciones.'))return;saveSimState();
+    const p=state.practice;if(!p||p.kind!=='sim')return;if(!confirm('¿Finalizar el simulacro? Después verás las respuestas y explicaciones.'))return;saveSimState();showProcessing('Revisando tu simulacro…','BANQO está corrigiendo las preguntas. Esto puede tardar unos segundos.');
     const answers=p.questions.map((q,i)=>{const s=p.answers[i]||{};return {question_id:q.id,opcion:s.selected==null?'':String.fromCharCode(65+s.selected),descartadas:(s.eliminated||[]).map(x=>String.fromCharCode(65+x)),marked:Boolean(s.marked),tiempo_seg:Number(s.tiempo_seg||0)};});
     let d;
     if(state.demo){let c=0,w=0,b=0;const review=p.questions.map((q,i)=>{const a=answers[i],r=!a.opcion?'BLANCO':a.opcion===q.correcta?'CORRECTA':'INCORRECTA';if(r==='CORRECTA')c++;else if(r==='INCORRECTA')w++;else b++;return {question_id:q.id,pregunta:q.pregunta,opciones:q.opciones,seleccionada:a.opcion,correcta:q.correcta,resultado:r,explicacion:q.explicacion,datito_galactico:q.datito_galactico};});d={correctas:c,incorrectas:w,blancas:b,puntaje:p.questions.length?c/p.questions.length*100:0,review};}
     else d=await api('finishSimulation',authPayload({simulation_id:p.simulationId,answers}));
-    clearInterval(timerInt);renderSimulationResult(d,p);state.practice=null;state.progress=null;if(!state.demo)await loadDashboard();
+    clearInterval(timerInt);renderSimulationResult(d,p);state.practice=null;state.progress=null;hideProcessing();if(!state.demo)loadDashboard().catch(()=>{});
+  }
+  function renderResultMap(review){
+    $('resultMapWrap').classList.remove('hidden');$('resultMap').innerHTML=(review||[]).map((r,i)=>{const cls=r.marked?'marked':r.resultado==='CORRECTA'?'correct':r.resultado==='INCORRECTA'?'wrong':'blank';return `<span class="sim-q ${cls}">${i+1}${r.marked?'★':''}</span>`;}).join('');
   }
   function renderSimulationResult(d,p,customTitle='Simulacro finalizado'){
-    $('resultTitle').textContent=customTitle;$('resultPct').textContent=`${round1(d.puntaje)}%`;$('resultScore').textContent=`${d.correctas} correctas · ${d.incorrectas} incorrectas · ${d.blancas} en blanco`;$('resultAdvice').textContent='Las respuestas y explicaciones se liberan recién ahora, al finalizar el examen.';
-    $('resultMapWrap').classList.remove('hidden');const review=d.review||[];$('resultMap').innerHTML=review.map((r,i)=>{const saved=p.answers[i]||{};const cls=r.resultado==='CORRECTA'?'correct':r.resultado==='INCORRECTA'?'wrong':'blank';return `<span class="sim-q ${cls}${saved.marked?' marked':''}">${i+1}${saved.marked?'★':''}</span>`;}).join('');
-    $('resultReview').innerHTML=review.map((r,i)=>`<details class="review-item"><summary>Pregunta ${i+1} · <b>${esc(r.resultado)}</b></summary><p>${esc(r.pregunta||'')}</p><p><b>Tu respuesta:</b> ${esc(r.seleccionada||'En blanco')} · <b>Correcta:</b> ${esc(r.correcta)}</p><p>${esc(r.explicacion||'Comentario pendiente.')}</p>${r.datito_galactico?`<div class="galaxy-review">🚀 ${esc(r.datito_galactico)}</div>`:''}</details>`).join(''); go('result');
+    $('resultTitle').textContent=customTitle;$('resultPct').textContent=`${round1(d.puntaje)}%`;$('resultScore').textContent=`${d.correctas} correctas · ${d.incorrectas} incorrectas · ${d.blancas} en blanco`;$('resultAdvice').textContent='Ya puedes revisar el simulacro pregunta por pregunta.';
+    const review=(d.review||[]).map((r,i)=>({...r,marked:Boolean(p?.answers?.[i]?.marked||r.marked)}));
+    state.lastSimulationReview={simulation_id:p?.simulationId||p?.sessionId||d.simulation_id||'',review};localStorage.setItem('banqo_last_sim_review',JSON.stringify(state.lastSimulationReview));
+    renderResultMap(review);$('resultReview').innerHTML='';$('reviewSimulationBtn')?.classList.remove('hidden');go('result');
+  }
+  function openSimulationReview(data,returnPage='result'){
+    const review=data?.review||[];if(!review.length){toast('No hay detalle disponible para este simulacro.');return;}
+    state.lastSimulationReview=data;state.reviewReturnPage=returnPage;go('simReview');
+    $('reviewSimMap').innerHTML=review.map((r,i)=>{const cls=r.marked?'marked':r.resultado==='CORRECTA'?'correct':r.resultado==='INCORRECTA'?'wrong':'blank';return `<button class="sim-q ${cls}" data-review-index="${i}">${i+1}${r.marked?'★':''}</button>`;}).join('');
+    $('reviewSimCounter').textContent=`${review.length} preguntas`;renderSimulationReviewDetail(0);
+  }
+  function renderSimulationReviewDetail(i){
+    const review=state.lastSimulationReview?.review||[],r=review[i];if(!r)return;
+    qsa('#reviewSimMap .sim-q').forEach((b,j)=>b.classList.toggle('current',j===i));
+    const opts=r.opciones||{};
+    $('reviewSimDetail').innerHTML=`<div class="review-detail-head"><span class="pill ${r.marked?'p-amber':r.resultado==='CORRECTA'?'p-green':r.resultado==='INCORRECTA'?'p-red':'p-blue'}">Pregunta ${i+1} · ${esc(r.marked?'DUDA / MARCADA':r.resultado)}</span></div><h2 class="review-question-large">${esc(r.pregunta||'')}</h2><div class="error-options">${['A','B','C','D','E'].filter(k=>opts[k]).map(k=>`<div class="error-option ${k===r.correcta?'correct':''} ${k===r.seleccionada&&k!==r.correcta?'wrong':''}"><b>${k}.</b> ${esc(opts[k])}${k===r.correcta?' <strong>✓ Correcta</strong>':''}${k===r.seleccionada?' <span class="your-answer">Tu respuesta</span>':''}</div>`).join('')}</div><div class="answer-comparison"><b>Tu respuesta:</b> ${esc(r.seleccionada||'En blanco')} &nbsp;·&nbsp; <b>Correcta:</b> ${esc(r.correcta||'—')}</div><div class="error-explanation"><b>¿Por qué?</b><br>${esc(r.explicacion||'Comentario pendiente de revisión.')}</div>${r.datito_galactico?`<div class="error-galaxy">🚀 ${esc(r.datito_galactico)}</div>`:''}`;
+  }
+  async function loadSavedSimulationReview(simulationId){
+    if(!simulationId)return;showProcessing('Cargando simulacro…','Recuperando el detalle de tus respuestas.');
+    try{const d=state.demo?state.lastSimulationReview:await api('getSimulationReview',authPayload({simulation_id:simulationId}));openSimulationReview(d,'progreso');}finally{hideProcessing();}
   }
 
   async function saveNote(){const q=currentQuestion();if(!q)return;if(state.demo){localStorage.setItem(`demo_note_${q.id}`,$('personalNote').value);toast('Nota guardada en este navegador');return;}await api('saveNote',authPayload({question_id:q.id,nota:$('personalNote').value}));toast('Nota guardada');}
@@ -445,7 +500,7 @@
       else d=await api('getErrorDetail',authPayload({question_id:questionId}));
       if(!d)throw new Error('QUESTION_NOT_FOUND');
       const q=d.question||{},opts=q.opciones||{};
-      box.innerHTML=`<span class="pill p-red">❌ Error registrado</span><h2>Revisión de la pregunta</h2><div class="error-detail-question">${esc(q.pregunta||'')}</div><div class="error-options">${['A','B','C','D','E'].filter(k=>opts[k]).map(k=>`<div class="error-option ${k===d.correcta?'correct':''}"><b>${k}.</b> ${esc(opts[k])}${k===d.correcta?' <strong>✓ Correcta</strong>':''}</div>`).join('')}</div><div class="error-explanation"><b>¿Por qué?</b><br>${esc(d.explicacion||'Comentario pendiente de revisión.')}</div>${d.datito_galactico?`<div class="error-galaxy">🚀 ${esc(d.datito_galactico)}</div>`:''}`;
+      box.innerHTML=`<span class="pill p-red">❌ Error registrado</span><h2>Revisión de la pregunta</h2><div class="error-detail-question">${esc(q.pregunta||'')}</div><div class="error-options">${['A','B','C','D','E'].filter(k=>opts[k]).map(k=>`<div class="error-option ${k===d.correcta?'correct':''} ${k===d.seleccionada&&k!==d.correcta?'wrong':''}"><b>${k}.</b> ${esc(opts[k])}${k===d.correcta?' <strong>✓ Correcta</strong>':''}${k===d.seleccionada?' <span class="your-answer">Tu respuesta</span>':''}</div>`).join('')}</div><div class="error-explanation"><b>¿Por qué?</b><br>${esc(d.explicacion||'Comentario pendiente de revisión.')}</div>${d.datito_galactico?`<div class="error-galaxy">🚀 ${esc(d.datito_galactico)}</div>`:''}`;
     }catch(e){box.innerHTML=`<h2>No se pudo cargar la revisión</h2><p>${esc(friendlyError(e))}</p>`;}
   }
 
@@ -459,18 +514,19 @@
     }catch(e){toast(friendlyError(e));}
   }
   function loadProfileDemo(){
-    state.dreamPlazas=demoDreamPlazas();
-    renderProfile({nombre:state.user.nombre,apellido:state.user.apellido,objetivo:state.user.objetivo,enam_score:'',graduation_year:'',pregrad_average:'',serums_difficulty:'',first_level_years:0,fifth_superior:false,dream_plaza_id:''});
+    state.dreamPlazas=demoDreamPlazas();state.dreamSedes=demoSedes;
+    renderProfile({nombre:state.user.nombre,apellido:state.user.apellido,objetivo:state.user.objetivo,enam_score:'',graduation_year:'',pregrad_average:'',serums_difficulty:'',first_level_years:0,fifth_superior:false,dream_specialty:'',dream_hospital:''});
     setupDreamSelectors();
   }
   function renderProfile(p){
     $('profileName').value=p.nombre||'';$('profileLast').value=p.apellido||'';$('profileGoal').value=p.objetivo||'';$('profileEnamScore').value=p.enam_score||'';$('profileGradYear').value=p.graduation_year||'';$('profilePregradAvg').value=p.pregrad_average||'';$('profileSerumsDifficulty').value=p.serums_difficulty||'';$('profileFirstLevelYears').value=p.first_level_years||0;$('profileFifthSuperior').checked=Boolean(p.fifth_superior);
-    state.dreamSelected=p.dream_plaza_id||state.dreamSelected||'';$('dreamPlazaCard')?.classList.toggle('hidden',(p.objetivo||'')!=='ENARM');renderCv();setupDreamSelectors();renderDreamProjection();
+    state.dreamSpecialty=p.dream_specialty||state.dreamSpecialty||'';state.dreamSelected=p.dream_hospital||state.dreamSelected||'';$('dreamPlazaCard')?.classList.toggle('hidden',(p.objetivo||'')!=='ENARM');renderCv();setupDreamSelectors();renderDreamProjection();
   }
   async function saveProfile(){
-    const p={nombre:$('profileName').value.trim(),apellido:$('profileLast').value.trim(),objetivo:$('profileGoal').value,enam_score:$('profileEnamScore').value,graduation_year:$('profileGradYear').value,pregrad_average:$('profilePregradAvg').value,serums_difficulty:$('profileSerumsDifficulty').value,first_level_years:$('profileFirstLevelYears').value,fifth_superior:$('profileFifthSuperior').checked,dream_plaza_id:$('dreamPlaza')?.value||''};
-    if(state.demo){state.user.nombre=p.nombre||state.user.nombre;state.user.apellido=p.apellido||state.user.apellido;state.user.objetivo=p.objetivo;state.profile={...(state.profile||{}),...p};state.dreamSelected=p.dream_plaza_id;renderGoalGreeting(p.objetivo);renderDreamProjection();toast('Perfil demo actualizado');return;}
-    const d=await api('saveProfile',authPayload({profile:p}));state.profile=d.profile;state.dreamSelected=d.profile.dream_plaza_id||'';state.user={...state.user,nombre:d.profile.nombre,apellido:d.profile.apellido,objetivo:d.profile.objetivo};writeJSON('banqo_user',state.user);$('userName').textContent=state.user.nombre;renderGoalGreeting(state.user.objetivo);renderDreamProjection();toast('Perfil guardado');
+    const hospitalSel=$('dreamPlaza')?.value||'',hospital=hospitalSel==='__OTHER__'?($('dreamHospitalOther')?.value||'').trim():hospitalSel;
+    const p={nombre:$('profileName').value.trim(),apellido:$('profileLast').value.trim(),objetivo:$('profileGoal').value,enam_score:$('profileEnamScore').value,graduation_year:$('profileGradYear').value,pregrad_average:$('profilePregradAvg').value,serums_difficulty:$('profileSerumsDifficulty').value,first_level_years:$('profileFirstLevelYears').value,fifth_superior:$('profileFifthSuperior').checked,dream_specialty:$('dreamSpecialty')?.value||'',dream_hospital:hospital};
+    if(state.demo){state.user.nombre=p.nombre||state.user.nombre;state.user.apellido=p.apellido||state.user.apellido;state.user.objetivo=p.objetivo;state.profile={...(state.profile||{}),...p};state.dreamSpecialty=p.dream_specialty;state.dreamSelected=p.dream_hospital;renderGoalGreeting(p.objetivo);renderDreamProjection();toast('Perfil demo actualizado');return;}
+    const d=await api('saveProfile',authPayload({profile:p}));state.profile=d.profile;state.dreamSpecialty=d.profile.dream_specialty||'';state.dreamSelected=d.profile.dream_hospital||'';state.user={...state.user,nombre:d.profile.nombre,apellido:d.profile.apellido,objetivo:d.profile.objetivo};writeJSON('banqo_user',state.user);$('userName').textContent=state.user.nombre;renderGoalGreeting(state.user.objetivo);renderDreamProjection();toast('Perfil guardado');
   }
 
   async function loadProgressData(){
@@ -518,7 +574,7 @@
     $('progressChartTitle').textContent=names[state.progressFilter]||'Evolución';
     $('progressChartSubtitle').textContent=arr.length?`${arr.length} sesión${arr.length===1?'':'es'} registrada${arr.length===1?'':'s'}.`:'Aún no hay sesiones registradas con este filtro.';
     $('progressChart').innerHTML=buildLineChart(arr.map((x,i)=>({label:String(i+1),value:Number(x.score||0)})),null);
-    $('progressHistory').innerHTML=arr.length?arr.slice().reverse().map(x=>`<div class="progress-row"><div><b>${esc(x.label||x.type)}</b><small>${formatDate(x.date)} · ${esc(x.type)}</small></div><strong>${round1(x.score)}%</strong></div>`).join(''):'<p class="muted">Aún no hay resultados con este filtro.</p>';
+    $('progressHistory').innerHTML=arr.length?arr.slice().reverse().map(x=>`<div class="progress-row"><div><b>${esc(x.label||x.type)}</b><small>${formatDate(x.date)} · ${esc(x.type)}</small></div><div class="progress-row-actions"><strong>${round1(x.score)}%</strong>${x.type==='SIMULACRO'&&x.session_id?`<button class="btn btn-soft compact" data-action="review-simulation" data-simulation-id="${esc(x.session_id)}">Revisar</button>`:''}</div></div>`).join(''):'<p class="muted">Aún no hay resultados con este filtro.</p>';
   }
   function buildLineChart(points,target){
     if(!points.length)return '<div class="empty-chart">Aún no hay sesiones registradas.</div>';
@@ -538,34 +594,24 @@
   }
 
   function demoDreamPlazas(){
-    return [
-      {id:'2025-ENDO-SEGUIN',especialidad:'Endocrinología',sede:'Hospital Nacional III-1 Carlos Alberto Seguín Escobedo',modalidad:'Libre',anio:2025,puntaje_referencia:76.797},
-      {id:'2025-ORL-SEGUIN',especialidad:'Otorrinolaringología',sede:'Hospital Nacional III-1 Carlos Alberto Seguín Escobedo',modalidad:'Libre',anio:2025,puntaje_referencia:73.264},
-      {id:'2025-PED-SEGUIN',especialidad:'Pediatría',sede:'Hospital Nacional III-1 Carlos Alberto Seguín Escobedo',modalidad:'Libre',anio:2025,puntaje_referencia:69.403}
-    ];
+    return [{id:'ENDO-REBA-2025',especialidad:'Endocrinología',sede:'Hospital Nacional Edgardo Rebagliati Martins',modalidad:'Libre',anio:2025,puntaje_referencia:77.878},{id:'ENDO-SEGUIN-2025',especialidad:'Endocrinología',sede:'Hospital Nacional III-1 Carlos Alberto Seguín Escobedo',modalidad:'Libre',anio:2025,puntaje_referencia:76.797},{id:'ORL-TRUJILLO-2025',especialidad:'Otorrinolaringología',sede:'Hospital Regional Docente de Trujillo',modalidad:'Libre',anio:2025,puntaje_referencia:67.119},{id:'GASTRO-DOSMAYO-2025',especialidad:'Gastroenterología',sede:'Hospital Nacional Dos de Mayo',modalidad:'Libre',anio:2025,puntaje_referencia:74.735}];
   }
+  const demoSedes=['Hospital Nacional Dos de Mayo','Hospital Nacional Daniel Alcides Carrión','Hospital Nacional Arzobispo Loayza','Hospital Nacional Edgardo Rebagliati Martins','Hospital Nacional Guillermo Almenara Irigoyen','Hospital Alberto Sabogal Sologuren','Hospital Regional Docente de Trujillo','Hospital Belén de Trujillo','Hospital Regional Honorio Delgado Espinoza','Hospital Nacional III-1 Carlos Alberto Seguín Escobedo'];
   async function loadDreamPlazas(){
-    if(state.demo){state.dreamPlazas=demoDreamPlazas();return state.dreamPlazas;}
-    if(state.dreamPlazas.length)return state.dreamPlazas;
-    const d=await api('getDreamPlazas',authPayload());
-    state.dreamPlazas=d.plazas||[];
-    setupDreamSelectors();
-    return state.dreamPlazas;
+    if(state.demo){state.dreamPlazas=demoDreamPlazas();state.dreamSedes=demoSedes;setupDreamSelectors();return state.dreamPlazas;}
+    if(state.dreamPlazas.length){setupDreamSelectors();return state.dreamPlazas;}
+    const d=await api('getDreamPlazas',authPayload());state.dreamPlazas=d.plazas||[];state.dreamSedes=d.sedes||[];setupDreamSelectors();return state.dreamPlazas;
   }
   function setupDreamSelectors(){
-    const s=$('dreamSpecialty'),p=$('dreamPlaza');if(!s||!p)return;
-    const specialties=[...new Set((state.dreamPlazas||[]).map(x=>x.especialidad).filter(Boolean))].sort();
-    const currentSpecialty=(state.dreamPlazas||[]).find(x=>String(x.id)===String(state.dreamSelected))?.especialidad||s.value||'';
-    s.innerHTML='<option value="">Selecciona especialidad</option>'+specialties.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');
-    if(currentSpecialty)s.value=currentSpecialty;
-    populateDreamPlazas(s.value);
+    const s=$('dreamSpecialty');if(!s)return;const specialties=[...new Set((state.dreamPlazas||[]).map(x=>x.especialidad).filter(Boolean))].sort();
+    const current=state.dreamSpecialty||state.profile?.dream_specialty||s.value||'';s.innerHTML='<option value="">Selecciona especialidad</option>'+specialties.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('');if(current)s.value=current;state.dreamSpecialty=s.value||current;populateDreamPlazas(state.dreamSpecialty);
   }
   function populateDreamPlazas(specialty){
-    const el=$('dreamPlaza');if(!el)return;
-    const arr=(state.dreamPlazas||[]).filter(x=>!specialty||x.especialidad===specialty);
-    el.innerHTML='<option value="">Selecciona una plaza</option>'+arr.map(x=>`<option value="${esc(x.id)}">${esc(x.sede)} · ${esc(x.modalidad||'Libre')} · ${esc(x.anio)}</option>`).join('');
-    if(state.dreamSelected && arr.some(x=>String(x.id)===String(state.dreamSelected)))el.value=state.dreamSelected;
+    const el=$('dreamPlaza');if(!el)return;const sedes=[...new Set((state.dreamSedes||[]).map(x=>typeof x==='string'?x:x.sede).filter(Boolean))].sort();
+    const selected=state.dreamSelected||state.profile?.dream_hospital||'';el.innerHTML='<option value="">Sin hospital específico</option>'+sedes.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')+'<option value="__OTHER__">Otra sede / no listada…</option>';
+    if(selected&&sedes.includes(selected)){el.value=selected;$('dreamHospitalOtherWrap')?.classList.add('hidden');}else if(selected){el.value='__OTHER__';$('dreamHospitalOtherWrap')?.classList.remove('hidden');if($('dreamHospitalOther'))$('dreamHospitalOther').value=selected;}else{$('dreamHospitalOtherWrap')?.classList.add('hidden');}
   }
+
   function currentCvEstimate(){
     const year=Number($('profileGradYear')?.value||0),enam=Number($('profileEnamScore')?.value||0),avg=Number($('profilePregradAvg')?.value||0),ser=Number($('profileSerumsDifficulty')?.value||0),years=Number($('profileFirstLevelYears')?.value||0),fifth=Boolean($('profileFifthSuperior')?.checked);
     const serMap={1:1,2:3,3:6,4:8,5:10}; const serPts=serMap[ser]||0,firstPts=years>=5?4:years===4?3:years===3?2:years===2?1:0,fifthPts=fifth?1:0;
@@ -575,17 +621,14 @@
     return serPts+firstPts+fifthPts+academic;
   }
   function renderDreamProjection(){
-    const id=$('dreamPlaza')?.value||state.dreamSelected||'';
-    const plaza=(state.dreamPlazas||[]).find(x=>String(x.id)===String(id));
-    if(!plaza){$('dreamReference')?.classList.add('hidden');if($('dreamChart'))$('dreamChart').innerHTML='<div class="empty-chart">Selecciona una plaza para ver tu evolución.</div>';return;}
-    state.dreamSelected=String(plaza.id);
-    const sims=(state.progress?.history||[]).filter(x=>x.type==='SIMULACRO').sort((a,b)=>new Date(a.date)-new Date(b.date));
-    const cv=currentCvEstimate();
-    const projected=sims.map((x,i)=>({label:String(i+1),value:Math.min(100,Number(x.score||0)*0.8+cv)}));
-    const current=projected.length?projected[projected.length-1].value:null,target=Number(plaza.puntaje_referencia||0),gap=current==null?null:current-target;
-    $('dreamReference').classList.remove('hidden');$('dreamTargetScore').textContent=target?round1(target):'—';$('dreamCurrentScore').textContent=current==null?'—':round1(current);$('dreamGap').textContent=gap==null?'—':`${gap>=0?'+':''}${round1(gap)}`;$('dreamGap').className=gap==null?'':gap>=0?'positive':'negative';
-    $('dreamChart').innerHTML=projected.length?buildLineChart(projected,target):'<div class="empty-chart">Completa al menos un simulacro para comparar tu proyección.</div>';
-    $('dreamNote').textContent=`Referencia observada ${plaza.anio}: ${plaza.especialidad} · ${plaza.sede}. BANQO proyecta tu resultado oficial como 80% del rendimiento del simulacro + tu CV estimado actual (${round1(cv)}/20). Es una referencia histórica, no un corte garantizado.`;
+    const specialty=$('dreamSpecialty')?.value||state.dreamSpecialty||state.profile?.dream_specialty||'';if(!specialty){$('dreamReference')?.classList.add('hidden');if($('dreamChart'))$('dreamChart').innerHTML='<div class="empty-chart">Selecciona una especialidad para ver tu evolución.</div>';return;}
+    state.dreamSpecialty=specialty;const sel=$('dreamPlaza')?.value||'',hospital=sel==='__OTHER__'?($('dreamHospitalOther')?.value||''):sel;state.dreamSelected=hospital;
+    const specialtyRefs=(state.dreamPlazas||[]).filter(x=>x.especialidad===specialty&&Number(x.puntaje_referencia)>0);let refs=specialtyRefs,exact=false;if(hospital){const exactRefs=specialtyRefs.filter(x=>x.sede===hospital);if(exactRefs.length){refs=exactRefs;exact=true;}}
+    if(!refs.length){$('dreamReference')?.classList.add('hidden');$('dreamChart').innerHTML='<div class="empty-chart">Aún no hay referencias históricas cargadas para esta especialidad.</div>';$('dreamNote').textContent='Puedes guardar igualmente tu especialidad y hospital; BANQO actualizará la comparación cuando incorporemos referencias oficiales.';return;}
+    const target=Math.min(...refs.map(x=>Number(x.puntaje_referencia||0)).filter(x=>x>0));const years=[...new Set(refs.map(x=>x.anio).filter(Boolean))].sort();
+    const sims=(state.progress?.history||[]).filter(x=>x.type==='SIMULACRO').sort((a,b)=>new Date(a.date)-new Date(b.date));const cv=currentCvEstimate();const projected=sims.map((x,i)=>({label:String(i+1),value:Math.min(100,Number(x.score||0)*0.8+cv)}));const current=projected.length?projected[projected.length-1].value:null,gap=current==null?null:current-target;
+    $('dreamReference').classList.remove('hidden');$('dreamTargetScore').textContent=round1(target);$('dreamCurrentScore').textContent=current==null?'—':round1(current);$('dreamGap').textContent=gap==null?'—':`${gap>=0?'+':''}${round1(gap)}`;$('dreamGap').className=gap==null?'':gap>=0?'positive':'negative';$('dreamChart').innerHTML=projected.length?buildLineChart(projected,target):'<div class="empty-chart">Completa al menos un simulacro para comparar tu proyección.</div>';
+    $('dreamNote').textContent=exact?`Mínimo histórico observado entre las referencias cargadas para ${specialty} · ${hospital}${years.length?' ('+years.join(', ')+')':''}. Es orientativo, no un corte garantizado.`:`No elegiste un hospital con referencia específica. BANQO usa el mínimo histórico observado entre las referencias cargadas de ${specialty}${years.length?' ('+years.join(', ')+')':''}. Es orientativo, no un corte garantizado.`;
   }
 
   function renderCv(){

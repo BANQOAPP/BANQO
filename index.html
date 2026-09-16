@@ -64,6 +64,7 @@
           <p class="center muted">¿No tienes cuenta? <button class="link-btn inline" data-action="show-register">Crear cuenta</button></p>
         </div>
         <div id="registerView" class="hidden">
+          <button class="auth-back" data-action="show-login">← Volver al inicio de sesión</button>
           <h2>Crea tu cuenta</h2><p class="muted">Tu progreso quedará guardado.</p>
           <div class="two-cols"><label>Nombres<input id="regName" autocomplete="given-name" placeholder="Nombre"></label><label>Apellidos<input id="regLast" autocomplete="family-name" placeholder="Apellido"></label></div>
           <label>Correo<input id="regEmail" type="email" autocomplete="email" placeholder="tu@correo.com"></label>
@@ -112,7 +113,7 @@
             <h3>1. Banco de origen</h3>
             <div class="source-grid" id="bankSources"><button class="source-card active" data-source="Todos"><span>🌐</span><b>Todos</b><small>Mezcla ENAM, ENARM, EsSalud y ENCAPS</small></button><button class="source-card" data-source="ENAM"><span>🩺</span><b>ENAM</b><small>Examen Nacional de Medicina</small></button><button class="source-card" data-source="ENARM"><span>🎯</span><b>ENARM</b><small>Residentado Médico</small></button><button class="source-card" data-source="ESSALUD"><span>🏥</span><b>EsSalud</b><small>Procesos y bancos EsSalud</small></button><button class="source-card" data-source="ENCAPS"><span>🧪</span><b>ENCAPS Medicina</b><small>Evaluación para SERUMS</small></button></div>
             <h3>2. Filtros</h3>
-            <div class="filters"><label>Especialidad<select id="bankSpecialty"><option value="">Todas</option></select></label><label>Tema<select id="bankTopic"><option value="">Todos</option></select></label><label>Subtema<select id="bankSubtopic"><option value="">Todos</option></select></label><label>Cantidad<select id="bankCount"><option selected>10</option><option>15</option><option>20</option><option>30</option><option>50</option></select></label></div>
+            <div class="filters"><label>Especialidad<select id="bankSpecialty"><option value="">Todas</option></select></label><label>Tema<select id="bankTopic"><option value="">Todos</option></select></label><label>Subtema<select id="bankSubtopic"><option value="">Todos</option></select></label><label>Cantidad<input id="bankCount" type="number" min="0" max="200" step="1" value="10"><small class="field-hint">0 = todas las disponibles (máx. 200)</small></label></div>
             <div class="toggle-row"><label><input type="checkbox" id="onlyNew"> Solo nuevas</label><label><input type="checkbox" id="onlyFailed"> Solo falladas</label><label><input type="checkbox" id="onlyBookmarked"> Solo guardadas</label></div>
             <button class="btn btn-primary" data-action="start-bank">Comenzar banqueo</button>
           </article>
@@ -120,7 +121,7 @@
 
         <section id="simulacros" class="page">
           <div class="page-head"><div><h1>Simulacros</h1><p>Selecciona el origen o mezcla todos los bancos.</p></div></div>
-          <article class="card setup-card"><div class="source-grid" id="simSources"><button class="source-card active" data-source="Todos"><span>🌐</span><b>Todos</b><small>Simulacro mixto</small></button><button class="source-card" data-source="ENAM"><span>🩺</span><b>ENAM</b><small>Formato ENAM</small></button><button class="source-card" data-source="ENARM"><span>🎯</span><b>ENARM</b><small>Formato Residentado</small></button><button class="source-card" data-source="ESSALUD"><span>🏥</span><b>EsSalud</b><small>Banco EsSalud</small></button><button class="source-card" data-source="ENCAPS"><span>🧪</span><b>ENCAPS Medicina</b><small>Formato evaluación SERUMS</small></button></div><div class="filters"><label>Número de preguntas<select id="simCount"><option selected>10</option><option>15</option><option>20</option><option>50</option><option>100</option></select></label></div><button class="btn btn-blue" data-action="start-sim">Iniciar simulacro</button></article>
+          <article class="card setup-card"><div class="source-grid" id="simSources"><button class="source-card active" data-source="Todos"><span>🌐</span><b>Todos</b><small>Simulacro mixto</small></button><button class="source-card" data-source="ENAM"><span>🩺</span><b>ENAM</b><small>Formato ENAM</small></button><button class="source-card" data-source="ENARM"><span>🎯</span><b>ENARM</b><small>Formato Residentado</small></button><button class="source-card" data-source="ESSALUD"><span>🏥</span><b>EsSalud</b><small>Banco EsSalud</small></button><button class="source-card" data-source="ENCAPS"><span>🧪</span><b>ENCAPS Medicina</b><small>Formato evaluación SERUMS</small></button></div><div class="filters"><label>Número de preguntas<input id="simCount" type="number" min="0" max="200" step="1" value="10"><small class="field-hint">0 = todas las disponibles (máx. 200)</small></label></div><button class="btn btn-blue" data-action="start-sim">Iniciar simulacro</button></article>
         </section>
 
         <section id="practice" class="page">
@@ -133,7 +134,7 @@
               <h2 id="qText" class="question-text"></h2>
               <div id="qImageWrap" class="question-image hidden"><img id="qImage" alt="Imagen de la pregunta"></div>
               <div id="options" class="options-list"></div>
-              <div class="practice-actions"><div class="practice-tools"><button class="btn btn-ghost" data-action="blank-answer">Dejar en blanco</button><button class="btn btn-soft" data-action="clear-eliminations">↺ Recuperar alternativas</button></div><button id="nextBtn" class="btn btn-primary" data-action="next-question" disabled>Siguiente</button></div>
+              <div class="practice-actions"><div class="practice-tools"><button id="prevBtn" class="btn btn-ghost" data-action="prev-question">← Anterior</button><button class="btn btn-ghost" data-action="blank-answer">Dejar en blanco</button><button class="btn btn-soft" data-action="clear-eliminations">↺ Recuperar alternativas</button></div><button id="nextBtn" class="btn btn-primary" data-action="next-question" disabled>Siguiente</button></div>
               <div id="feedback"></div>
               <div id="notePanel" class="personal-note hidden"><div><b>📝 Mi nota personal</b><small>Solo tú la ves. Se mostrará después de responder cuando esta pregunta vuelva a aparecer.</small></div><textarea id="personalNote" maxlength="500" placeholder="Ej.: Recordar: café = sigmoides"></textarea><button class="btn btn-soft compact" data-action="save-note">Guardar nota</button></div>
             </article>
@@ -144,7 +145,19 @@
           </div>
         </section>
 
-        <section id="result" class="page"><article class="card result-card"><div class="trophy">🏆</div><h1 id="resultTitle">¡Sesión completada!</h1><strong id="resultPct">0%</strong><p id="resultScore">0/0 correctas</p><p id="resultAdvice" class="muted"></p><div id="resultMapWrap" class="result-map-wrap hidden"><h3>Mapa final</h3><div class="sim-legend center-legend"><span><i class="dot correct"></i> Correcta</span><span><i class="dot wrong"></i> Incorrecta</span><span><i class="dot blank"></i> En blanco</span><span><i class="dot marked"></i> Marcada ⭐</span></div><div id="resultMap" class="sim-map result-map"></div></div><div id="resultReview" class="result-review"></div><div><button class="btn btn-primary" data-action="go-banqueo">Seguir practicando</button> <button class="btn btn-ghost" data-action="dashboard">Volver al inicio</button></div></article></section>
+        <section id="result" class="page"><article class="card result-card"><div class="trophy">🏆</div><h1 id="resultTitle">¡Sesión completada!</h1><strong id="resultPct">0%</strong><p id="resultScore">0/0 correctas</p><p id="resultAdvice" class="muted"></p><div id="resultMapWrap" class="result-map-wrap hidden"><h3>Mapa final</h3><div class="sim-legend center-legend"><span><i class="dot correct"></i> Correcta</span><span><i class="dot wrong"></i> Incorrecta</span><span><i class="dot blank"></i> En blanco</span><span><i class="dot marked"></i> Marcada ⭐</span></div><div id="resultMap" class="sim-map result-map"></div></div><div id="resultReview" class="result-review"></div><div class="result-actions"><button id="reviewSimulationBtn" class="btn btn-blue hidden" data-action="review-last-simulation">🔎 Revisar simulacro</button><button class="btn btn-primary" data-action="go-banqueo">Seguir practicando</button> <button class="btn btn-ghost" data-action="dashboard">Volver al inicio</button></div></article></section>
+
+        <section id="simReview" class="page">
+          <div class="page-head"><div><h1>Revisar simulacro</h1><p>Explora cada pregunta y compara tu respuesta con la correcta.</p></div><button class="btn btn-ghost" data-action="close-sim-review">← Volver</button></div>
+          <div class="simulation-review-layout">
+            <aside class="card simulation-review-sidebar">
+              <div class="section-head"><h3>Preguntas</h3><span id="reviewSimCounter" class="pill p-blue">0/0</span></div>
+              <div class="sim-legend review-legend"><span><i class="dot correct"></i> Correcta</span><span><i class="dot wrong"></i> Incorrecta</span><span><i class="dot marked"></i> Duda ⭐</span><span><i class="dot blank"></i> En blanco</span></div>
+              <div id="reviewSimMap" class="sim-map review-sim-map"></div>
+            </aside>
+            <article id="reviewSimDetail" class="card simulation-review-detail"><p class="muted">Selecciona una pregunta del panel lateral.</p></article>
+          </div>
+        </section>
 
         <section id="errores" class="page"><div class="page-head"><div><h1>Mis errores</h1><p>Preguntas que has fallado y conviene volver a ver.</p></div></div><div id="errorsList" class="list-stack"></div></section>
         <section id="progreso" class="page">
@@ -220,14 +233,14 @@
             <div class="section-head"><div><h2>🎯 Mi plaza soñada</h2><p class="muted">Elige una plaza de Residentado y BANQO comparará tus simulacros con una referencia histórica.</p></div><span class="pill p-amber">Solo simulacros</span></div>
             <div class="dream-form-grid">
               <label>Especialidad<select id="dreamSpecialty"><option value="">Selecciona especialidad</option></select></label>
-              <label>Plaza / sede<select id="dreamPlaza"><option value="">Selecciona una plaza</option></select></label>
+              <label>Hospital / sede (opcional)<select id="dreamPlaza"><option value="">Sin hospital específico</option></select><small class="field-hint">Si lo dejas vacío, BANQO usará el mínimo histórico observado de la especialidad.</small></label><label id="dreamHospitalOtherWrap" class="hidden">Otra sede<input id="dreamHospitalOther" placeholder="Escribe el hospital o sede"></label>
             </div>
             <div id="dreamReference" class="dream-reference hidden">
-              <div><small>Referencia histórica</small><strong id="dreamTargetScore">—</strong><span>/100</span></div>
+              <div><small>Mínimo histórico observado</small><strong id="dreamTargetScore">—</strong><span>/100</span></div>
               <div><small>Mi proyección actual</small><strong id="dreamCurrentScore">—</strong><span>/100</span></div>
               <div><small>Diferencia</small><strong id="dreamGap">—</strong><span>pts</span></div>
             </div>
-            <div id="dreamChart" class="dream-chart"><div class="empty-chart">Selecciona una plaza para ver tu evolución.</div></div>
+            <div id="dreamChart" class="dream-chart"><div class="empty-chart">Selecciona una especialidad para ver tu evolución.</div></div>
             <p id="dreamNote" class="source-note">La referencia es histórica y orientativa; no garantiza el puntaje de corte de un proceso futuro.</p>
             <div class="dream-actions"><button class="btn btn-blue" data-action="save-profile">Guardar plaza soñada</button></div>
           </article>
@@ -237,11 +250,14 @@
   </section>
 
 
-  <div id="feedbackModeModal" class="modal hidden"><div class="modal-card feedback-mode-card"><div class="qbito giant">🧑‍🚀</div><h2>¿Cuándo quieres ver las respuestas?</h2><p class="muted">Elige cómo quieres resolver esta sesión antes de empezar. Puedes cambiarlo en cada banqueo, simulacro o examen.</p><div class="feedback-mode-options"><button class="mode-choice" data-action="choose-feedback-immediate"><span>⚡</span><b>Después de cada pregunta</b><small>Te mostramos la respuesta correcta, explicación y Datito galáctico apenas marques tu respuesta. Requiere una consulta al servidor por pregunta.</small></button><button class="mode-choice recommended" data-action="choose-feedback-end"><span>🏁</span><b>Al finalizar</b><small>Respondes todo primero y BANQO corrige la sesión completa al final. Es más rápido y se parece más a un examen real.</small><em>Recomendado</em></button></div><button class="btn btn-ghost full" data-action="cancel-feedback-mode">Cancelar</button></div></div>
+  <div id="feedbackModeModal" class="modal hidden"><div class="modal-card feedback-mode-card"><div class="qbito giant">🧑‍🚀</div><h2>¿Cuándo quieres ver las respuestas?</h2><p class="muted">Primero selecciona una modalidad. El examen recién comenzará cuando pulses <b>Confirmar e iniciar</b>.</p><div class="feedback-mode-options"><button class="mode-choice" data-mode="immediate" data-action="choose-feedback-immediate"><span>⚡</span><b>Después de cada pregunta</b><small>Respuesta correcta, explicación y Datito galáctico apenas confirmas tu respuesta.</small></button><button class="mode-choice recommended" data-mode="end" data-action="choose-feedback-end"><span>🏁</span><b>Al finalizar</b><small>Respondes todo primero y BANQO corrige al final. Es más rápido y se parece más a un examen real.</small><em>Recomendado</em></button></div><div class="feedback-confirm-row"><button class="btn btn-ghost" data-action="cancel-feedback-mode">Cancelar</button><button id="feedbackConfirmBtn" class="btn btn-primary" data-action="confirm-feedback-mode" disabled>Confirmar e iniciar</button></div></div></div>
 
   <div id="errorDetailModal" class="modal hidden"><div class="modal-card error-detail-card"><button class="modal-x" data-action="close-error-detail">×</button><div id="errorDetailContent"><p>Cargando...</p></div></div></div>
 
   <div id="sessionModal" class="modal hidden"><div class="modal-card"><div class="qbito giant">🛰️</div><h2>Sesión iniciada en otro dispositivo</h2><p>Esta sesión dejó de ser la sesión activa de la cuenta.</p><button class="btn btn-blue full" data-action="session-kicked">Volver al login</button></div></div>
+
+
+  <div id="processingOverlay" class="processing-overlay hidden"><div class="processing-card"><div class="spinner"></div><h2 id="processingTitle">Procesando…</h2><p id="processingText">Un momento, BANQO está revisando tus respuestas.</p></div></div>
 
   <script src="config.js"></script>
   <script src="app.js"></script>
